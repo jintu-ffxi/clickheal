@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Test: unit tests",
+      "type": "shell",
+      "command": "lua tests/run.lua",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Test: Ashita glue smoke test (stubs)",
+      "type": "shell",
+      "command": "lua tests/smoke_ashita.lua",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Print screen footprints",
+      "type": "shell",
+      "command": "lua tools/footprint.lua",
+      "problemMatcher": []
+    },
+    {
+      "label": "Render layout previews (PNG)",
+      "type": "shell",
+      "command": "lua tools/dump_draw.lua preview_json && python tools/preview.py preview_json preview_png",
+      "problemMatcher": []
+    }
+  ]
+}
