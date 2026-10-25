@@ -20,7 +20,9 @@ local IMGUI_FUNCS = {
     -- setup panel widgets
     'BeginTabBar', 'EndTabBar', 'BeginTabItem', 'EndTabItem', 'BeginCombo', 'EndCombo', 'Selectable',
     'Checkbox', 'SliderFloat', 'SliderInt', 'Button', 'SameLine', 'Separator', 'Spacing',
-    'TextColored', 'TextWrapped', 'InvisibleButton', 'SetCursorScreenPos', 'IsItemActive', 'IsMouseDown',
+    'TextColored', 'TextWrapped', 'InvisibleButton', 'BeginChild', 'EndChild', 'PushStyleColor',
+    'PopStyleColor', 'SetNextItemWidth', 'GetContentRegionAvail', 'CollapsingHeader', 'SmallButton',
+    'IsItemHovered', 'SetTooltip', 'SetCursorScreenPos', 'IsItemActive', 'IsMouseDown',
 }
 
 local GLOBALS = {

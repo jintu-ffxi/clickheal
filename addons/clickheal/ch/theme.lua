@@ -75,6 +75,8 @@ presets.modern = {
     btn = NEUTRAL.btn, btn_hot = NEUTRAL.btn_hot, text = NEUTRAL.text, text_dim = NEUTRAL.text_dim,
     dead = NEUTRAL.dead,
     good   = P(0.600, 0.820, 0.760, 1.0),   -- muted mint (healthy HP)
+    -- Full-row HP fill: deep, saturated enough to carry white text. Healthy green -> yellow -> orange -> red.
+    hp_stops = { P(0.16, 0.56, 0.38, 1.0), P(0.80, 0.66, 0.16, 1.0), P(0.86, 0.45, 0.14, 1.0), P(0.80, 0.20, 0.20, 1.0) },
     bar_hi = P(0.930, 0.950, 0.975, 1.0),   -- soft white HP bar (Strip look)
     warn   = P(0.950, 0.720, 0.300, 1.0),   -- amber
     bad    = P(0.930, 0.330, 0.330, 1.0),   -- red
@@ -154,6 +156,14 @@ end
 -- Uses the palette's own good / warn / bad so the colorblind and mono palettes keep working.
 function theme.hp_fill(pal, frac)
     frac = math.max(0, math.min(1, frac or 0))
+    local st = pal.hp_stops
+    if st then
+        -- Four fixed stops: full, yellow, orange, red. Anchors at 100% / 55% / 30% / 12% HP.
+        if frac >= 0.55 then return theme.mix(st[2], st[1], (frac - 0.55) / 0.45) end
+        if frac >= 0.30 then return theme.mix(st[3], st[2], (frac - 0.30) / 0.25) end
+        if frac >= 0.12 then return theme.mix(st[4], st[3], (frac - 0.12) / 0.18) end
+        return st[4]
+    end
     local orange = theme.mix(pal.warn, pal.bad, 0.55)
     if frac >= 0.55 then return theme.mix(pal.warn, pal.good, (frac - 0.55) / 0.45) end
     if frac >= 0.30 then return theme.mix(orange, pal.warn, (frac - 0.30) / 0.25) end

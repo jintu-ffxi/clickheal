@@ -1,10 +1,11 @@
 --[[
     ClickHeal - configui.lua
-    The /ch setup panel. Plain ImGui widgets, scaled with the game resolution so it stays readable
-    at 4K. Edits the settings table in place and tells the caller when something changed.
+    The /ch setup panel: a dark themed window with a navigation sidebar, labelled sections and quick
+    toggles along the top. Scaled with the game resolution so it stays readable at 4K. Edits the
+    settings table in place and tells the caller when something changed.
 
-    UNVERIFIED AGAINST A LIVE ASHITA BUILD (see gfx_imgui.lua); `/ch apicheck` lists any widget
-    functions missing on your install.
+    Every style/theme call is protected and always undone, so a missing function on this ImGui build
+    only costs some polish, never the panel. `/ch apicheck` lists anything missing.
 ]]--
 
 local imgui    = require('imgui')
@@ -17,40 +18,142 @@ local bindings = require('ch.bindings')
 local M = {}
 
 M.open = { false }          -- ImGui wants a table for the window's open/close flag
+M.page = 1                  -- selected sidebar page
 
 function M.toggle() M.open[1] = not M.open[1] end
 
-local WARN = { 0.96, 0.78, 0.22, 1.0 }
-local DIM  = { 0.62, 0.65, 0.72, 1.0 }
-local GOOD = { 0.30, 0.78, 0.40, 1.0 }
+-- ---------------------------------------------------------------------------------------------
+-- look
+-- ---------------------------------------------------------------------------------------------
 
+local ACCENT = { 0.40, 0.62, 0.95, 1.0 }
+local DIM    = { 0.62, 0.65, 0.72, 1.0 }
+local WARN   = { 0.96, 0.78, 0.22, 1.0 }
+local GOOD   = { 0.30, 0.78, 0.46, 1.0 }
+local BAD    = { 0.90, 0.36, 0.36, 1.0 }
+
+local function mulrgb(c, k, a) return { c[1] * k, c[2] * k, c[3] * k, a or c[4] } end
+
+local THEME_COLORS = {
+    { 'ImGuiCol_WindowBg',        { 0.065, 0.075, 0.095, 0.98 } },
+    { 'ImGuiCol_ChildBg',         { 0.085, 0.095, 0.120, 1.00 } },
+    { 'ImGuiCol_PopupBg',         { 0.085, 0.095, 0.120, 0.99 } },
+    { 'ImGuiCol_Border',          { 0.19, 0.21, 0.27, 0.90 } },
+    { 'ImGuiCol_FrameBg',         { 0.125, 0.145, 0.185, 1.00 } },
+    { 'ImGuiCol_FrameBgHovered',  { 0.165, 0.195, 0.255, 1.00 } },
+    { 'ImGuiCol_FrameBgActive',   { 0.195, 0.235, 0.310, 1.00 } },
+    { 'ImGuiCol_TitleBg',         { 0.065, 0.075, 0.095, 1.00 } },
+    { 'ImGuiCol_TitleBgActive',   { 0.075, 0.090, 0.120, 1.00 } },
+    { 'ImGuiCol_CheckMark',       ACCENT },
+    { 'ImGuiCol_SliderGrab',      ACCENT },
+    { 'ImGuiCol_SliderGrabActive', { 0.55, 0.74, 1.00, 1.00 } },
+    { 'ImGuiCol_Button',          { 0.150, 0.170, 0.220, 1.00 } },
+    { 'ImGuiCol_ButtonHovered',   { 0.200, 0.235, 0.310, 1.00 } },
+    { 'ImGuiCol_ButtonActive',    mulrgb(ACCENT, 0.75, 1.0) },
+    { 'ImGuiCol_Header',          mulrgb(ACCENT, 0.55, 0.30) },
+    { 'ImGuiCol_HeaderHovered',   mulrgb(ACCENT, 0.70, 0.45) },
+    { 'ImGuiCol_HeaderActive',    mulrgb(ACCENT, 0.80, 0.60) },
+    { 'ImGuiCol_Separator',       { 0.19, 0.21, 0.27, 1.00 } },
+    { 'ImGuiCol_Text',            { 0.90, 0.92, 0.95, 1.00 } },
+    { 'ImGuiCol_TextDisabled',    DIM },
+}
+
+local sc = 1.0   -- UI scale for the current frame
+
+--- Pushes the panel theme. Returns the number of colors and vars pushed (for pop_theme).
+local function push_theme()
+    local colors, vars = 0, 0
+    for _, c in ipairs(THEME_COLORS) do
+        local id = _G[c[1]]
+        if id and pcall(imgui.PushStyleColor, id, c[2]) then colors = colors + 1 end
+    end
+    local function var(name, v)
+        local id = _G[name]
+        if id and pcall(imgui.PushStyleVar, id, v) then vars = vars + 1 end
+    end
+    var('ImGuiStyleVar_WindowRounding', 9 * sc)
+    var('ImGuiStyleVar_ChildRounding', 7 * sc)
+    var('ImGuiStyleVar_FrameRounding', 5 * sc)
+    var('ImGuiStyleVar_GrabRounding', 5 * sc)
+    var('ImGuiStyleVar_PopupRounding', 6 * sc)
+    var('ImGuiStyleVar_WindowPadding', { 16 * sc, 14 * sc })
+    var('ImGuiStyleVar_FramePadding', { 10 * sc, 6 * sc })
+    var('ImGuiStyleVar_ItemSpacing', { 10 * sc, 9 * sc })
+    return colors, vars
+end
+
+local function pop_theme(colors, vars)
+    if colors > 0 then pcall(imgui.PopStyleColor, colors) end
+    if vars > 0 then pcall(imgui.PopStyleVar, vars) end
+end
+
+--- Runs fn with one text color pushed (always popped).
+local function with_color(color, fn)
+    local id = _G.ImGuiCol_Text
+    local pushed = id and pcall(imgui.PushStyleColor, id, color)
+    fn()
+    if pushed then pcall(imgui.PopStyleColor, 1) end
+end
+
+local function xy(a, b)
+    if type(a) == 'number' then return a, b or 0 end
+    if type(a) == 'table' or type(a) == 'userdata' then
+        local ok1, x = pcall(function() return a.x or a[1] end)
+        local ok2, y = pcall(function() return a.y or a[2] end)
+        return (ok1 and x) or 0, (ok2 and y) or 0
+    end
+    return 0, 0
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- layout helpers: a label column on the left, the control on the right
+-- ---------------------------------------------------------------------------------------------
+
+local LABEL_W, CTRL_W = 200, 260
 local reset_armed = false
 
--- ---------------------------------------------------------------------------------------------
--- widget helpers (each returns true when the user changed the value)
--- ---------------------------------------------------------------------------------------------
+--- Positions the next widget in the control column, after its label.
+local function label(text, tip)
+    imgui.Text(text)
+    if tip and imgui.IsItemHovered() then imgui.SetTooltip(tip) end
+    imgui.SameLine(LABEL_W)
+    imgui.SetNextItemWidth(CTRL_W)
+end
 
-local function checkbox(label, tbl, key)
+local function hint(text)
+    with_color(DIM, function() imgui.TextWrapped(text) end)
+end
+
+local function section(title)
+    imgui.Spacing()
+    imgui.TextColored(ACCENT, string.upper(title))
+    imgui.Separator()
+end
+
+local function checkbox(text, tbl, key, tip)
+    label(text, tip)
     local t = { tbl[key] and true or false }
-    if imgui.Checkbox(label, t) then
+    if imgui.Checkbox('##' .. key, t) then
         tbl[key] = t[1]
         return true
     end
     return false
 end
 
-local function slider(label, tbl, key, lo, hi, fmt)
+local function slider(text, tbl, key, lo, hi, fmt, tip)
+    label(text, tip)
     local t = { tbl[key] }
-    if imgui.SliderFloat(label, t, lo, hi, fmt or '%.2f') then
+    if imgui.SliderFloat('##' .. key, t, lo, hi, fmt or '%.2f') then
         tbl[key] = t[1]
         return true
     end
     return false
 end
 
-local function slider_int(label, tbl, key, lo, hi)
+local function slider_int(text, tbl, key, lo, hi, tip)
+    label(text, tip)
     local t = { math.floor(tbl[key] + 0.5) }
-    if imgui.SliderInt(label, t, lo, hi) then
+    if imgui.SliderInt('##' .. key, t, lo, hi) then
         tbl[key] = t[1]
         return true
     end
@@ -58,15 +161,16 @@ local function slider_int(label, tbl, key, lo, hi)
 end
 
 --- Dropdown over `options` ({ value, text } pairs). Returns true when the choice changed.
-local function combo(label, tbl, key, options)
+local function combo(text, tbl, key, options, tip)
+    label(text, tip)
     local current_text = tostring(tbl[key])
     for _, o in ipairs(options) do
         if o[1] == tbl[key] then current_text = o[2] end
     end
     local changed = false
-    if imgui.BeginCombo(label, current_text) then
+    if imgui.BeginCombo('##' .. key, current_text) then
         for _, o in ipairs(options) do
-            if imgui.Selectable(o[2], o[1] == tbl[key]) then
+            if imgui.Selectable(o[2] .. '##' .. key .. o[1], o[1] == tbl[key]) then
                 tbl[key] = o[1]
                 changed = true
             end
@@ -76,20 +180,31 @@ local function combo(label, tbl, key, options)
     return changed
 end
 
-local function hint(text)
-    imgui.TextColored(DIM, text)
+--- A button that shows an on/off state with color. Returns true when clicked.
+local function toggle_button(text, on, id, on_color)
+    local pushed = 0
+    local function push(name, c) local i = _G[name]; if i and pcall(imgui.PushStyleColor, i, c) then pushed = pushed + 1 end end
+    if on then
+        local c = on_color or ACCENT
+        push('ImGuiCol_Button', mulrgb(c, 0.62, 1.0))
+        push('ImGuiCol_ButtonHovered', mulrgb(c, 0.80, 1.0))
+        push('ImGuiCol_ButtonActive', c)
+    end
+    local clicked = imgui.Button(text .. '##tg_' .. id)
+    if pushed > 0 then pcall(imgui.PopStyleColor, pushed) end
+    return clicked
 end
 
 -- ---------------------------------------------------------------------------------------------
--- tabs
+-- pages
 -- ---------------------------------------------------------------------------------------------
 
 local STYLE_OPTIONS = {
     { 'full',    'Full - job, bars, distance, spell row' },
     { 'compact', 'Compact - one line per member' },
     { 'minimal', 'Minimal - spells appear on hover' },
-    { 'grid',    'Grid - click the cell itself (WoW-style), bars fill the cell' },
-    { 'strip',   'Strip - job block, slim bars, click the row' },
+    { 'grid',    'Grid - click the cell itself, bars fill the cell' },
+    { 'strip',   'Strip - job block, HP bar row, debuff icons' },
 }
 local MODE_OPTIONS = {
     { 'party',     'Party only (6)' },
@@ -106,40 +221,36 @@ local COLOR_OPTIONS = {
     { 'mono',       'Mono - greyscale, even calmer' },
     { 'colorblind', 'Color-blind friendly' },
 }
+local JOB_OPTIONS = {
+    { 'text', 'Text - WHM/SCH 75' },
+    { 'tag',  'Tag - job chip + sub job' },
+}
 
-local function tab_layout(s, ctx)
+local function page_layout(s, ctx)
     local changed = false
-    changed = combo('Layout', s, 'style', STYLE_OPTIONS) or changed
+    section('Frame')
+    changed = combo('Layout', s, 'style', STYLE_OPTIONS, 'How each party member is drawn.') or changed
     changed = combo('Members shown', s, 'mode', MODE_OPTIONS) or changed
     changed = combo('Arrangement', s, 'orientation', ORIENT_OPTIONS) or changed
-    changed = checkbox('Hover a member to open their spell flyout (Grid / Strip)', s, 'flyout') or changed
-    changed = checkbox('Shared spell bar (Grid / Strip): pick a spell, then click a member', s, 'spellbar') or changed
-    changed = checkbox('Also cast the bound spell on a plain cell click (Bindings tab)', s, 'cell_binds') or changed
-    changed = checkbox('Hide alliance parties that are empty', s, 'hide_empty_groups') or changed
+    changed = checkbox('Hide empty parties', s, 'hide_empty_groups') or changed
     changed = checkbox('Show empty slots', s, 'show_empty_slots') or changed
 
-    imgui.Separator()
-    changed = checkbox('Scale automatically with game resolution', s, 'auto_scale') or changed
-    changed = slider(s.auto_scale and 'Size multiplier' or 'Size (absolute)', s, 'scale', 0.5, 3.0) or changed
+    section('Size')
+    changed = checkbox('Follow game resolution', s, 'auto_scale', '1080p = 1x, 4K = 2x.') or changed
+    changed = slider(s.auto_scale and 'Size multiplier' or 'Size (absolute)', s, 'scale', 0.5, 3.0, '%.2f',
+        'You can also drag the corner of the window while it is unlocked.') or changed
     changed = slider('Text size', s, 'font_mult', 0.6, 2.0) or changed
-    changed = slider_int('Row slant (0 = square)', s, 'slant', 0, 16) or changed
-    changed = slider_int('Flyout button size', s, 'fly_btn', 24, 64) or changed
-    changed = slider_int('Flyout button spacing', s, 'fly_gap', 2, 16) or changed
     changed = slider('Opacity', s, 'opacity', 0.2, 1.0) or changed
-    hint('Text size: raise this if text looks cramped or tiny; ImGui\'s default font differs between setups.')
-
-    imgui.Separator()
     if ctx.geom then
         local g = ctx.geom
-        imgui.Text(string.format('Current size: %d x %d px  (%.1f%% x %.1f%% of %d x %d)',
-            g.width, g.height, g.width / ctx.disp_w * 100, g.height / ctx.disp_h * 100, ctx.disp_w, ctx.disp_h))
-        imgui.Text(string.format('Effective scale: %.2f', g.scale))
+        hint(string.format('Now %d x %d px (%.1f%% x %.1f%% of the %d x %d screen), effective scale %.2f.',
+            g.width, g.height, g.width / ctx.disp_w * 100, g.height / ctx.disp_h * 100, ctx.disp_w, ctx.disp_h, g.scale))
     end
 
-    imgui.Separator()
-    changed = checkbox('Locked (clickable, fixed in place)', s, 'locked') or changed
-    hint('Unlock to drag the frames and the alert bar to a new spot. Spell clicks are off while unlocked.')
-    if imgui.Button('Reset frame positions') then
+    section('Position')
+    changed = checkbox('Locked', s, 'locked', 'Locked = clicks cast. Unlocked = drag the window and its corner.') or changed
+    label('Frame position')
+    if imgui.Button('Reset to default##resetpos') then
         s.pos = { x = chconfig.defaults.pos.x, y = chconfig.defaults.pos.y }
         s.alert_pos = nil
         ctx.force_pos()
@@ -148,56 +259,41 @@ local function tab_layout(s, ctx)
     return changed
 end
 
-local function tab_alerts(s)
+local function page_appearance(s)
     local changed = false
-    local a = s.alerts
-    changed = checkbox('Show the priority alert bar', a, 'enabled') or changed
-    changed = checkbox('Pulse critical alerts', a, 'pulse') or changed
-    changed = checkbox('Alert when a member is KO (suggest Raise)', a, 'raise_alert') or changed
-    changed = checkbox('Alert on low HP', a, 'hp_alert') or changed
-    changed = slider_int('Low HP threshold (%)', s, 'hp_crit', 5, 95) or changed
-    changed = slider_int('Alerts shown at once', a, 'max', 1, 8) or changed
+    section('Colors')
+    changed = combo('Palette', s, 'colors', COLOR_OPTIONS) or changed
 
-    imgui.Separator()
-    imgui.Text('Heal range (yalms)')
-    changed = slider('Out of range beyond', s, 'max_range', 5.0, 30.0, '%.1f') or changed
-    changed = slider('Distance turns yellow beyond', s, 'warn_range', 1.0, s.max_range, '%.1f') or changed
+    section('Rows')
+    changed = slider_int('Row slant (0 = square)', s, 'slant', 0, 16, 'Strip layout only. 0 gives clean rounded rows.') or changed
+    changed = checkbox('Show job and sub job', s, 'show_job') or changed
+    changed = combo('Job display', s, 'job_style', JOB_OPTIONS) or changed
+    changed = checkbox('Show distance', s, 'show_dist') or changed
+    changed = checkbox('Show MP bar', s, 'show_mp') or changed
 
-    imgui.Separator()
-    imgui.Text('Debuffs that raise an alert')
-    hint('Untick to silence one. The suggested spell is shown in brackets.')
-    for _, key in ipairs(debuffs.order) do
-        local info = debuffs.info[key]
-        local spell = info.spell and spells.defs[info.spell] and spells.defs[info.spell].name or 'no spell'
-        local t = { not a.muted[key] }
-        if imgui.Checkbox(string.format('%s  (%s)##debuff_%s', info.label, spell, key), t) then
-            a.muted[key] = (not t[1]) or nil
-            changed = true
-        end
-    end
-    hint('Alliance members\' debuffs are only visible if the game exposes them; see README.')
+    section('Buffs')
+    changed = checkbox('Buff pips under the HP bar', s, 'show_buffs', 'Full layout only.') or changed
+    changed = checkbox('Only buffs my job can cast', s, 'buffs_mine_only') or changed
+    changed = checkbox('Seconds left on pips', s, 'show_timers') or changed
+    changed = checkbox('Spell row shows buffs', s, 'buff_mode', 'Also: the HEAL/BUFF switch in the title bar.') or changed
     return changed
 end
 
-local JOB_OPTIONS = {
-    { 'text', 'Text - WHM/SCH 99' },
-    { 'tag',  'Tag - job chip + sub job' },
-}
-
-local function tab_appearance(s)
+local function page_flyout(s)
     local changed = false
-    changed = combo('Colors', s, 'colors', COLOR_OPTIONS) or changed
-    imgui.Separator()
-    changed = checkbox('Show job / sub job', s, 'show_job') or changed
-    changed = combo('Job display', s, 'job_style', JOB_OPTIONS) or changed
-    imgui.Separator()
-    changed = checkbox('Buff pips under the HP bar (full layout)', s, 'show_buffs') or changed
-    changed = checkbox('  only buffs my job can cast', s, 'buffs_mine_only') or changed
-    changed = checkbox('Seconds left on pips and debuff chips', s, 'show_timers') or changed
-    changed = checkbox('Spell row shows buffs instead of heals (also: HEAL/BUFF switch in the title bar)', s, 'buff_mode') or changed
-    imgui.Separator()
-    changed = checkbox('Show distance', s, 'show_dist') or changed
-    changed = checkbox('Show MP bar', s, 'show_mp') or changed
+    section('Hover flyout')
+    changed = checkbox('Open on hover', s, 'flyout', 'Hover a member to open their spell buttons beside the row.') or changed
+    changed = slider_int('Button size', s, 'fly_btn', 24, 64, 'In pixels at 1080p; scales with the game resolution.') or changed
+    changed = slider_int('Button spacing', s, 'fly_gap', 2, 16) or changed
+
+    section('Other ways to cast')
+    changed = checkbox('Shared spell bar', s, 'spellbar', 'Pick a spell, then click a member.') or changed
+    changed = checkbox('Cast on a plain row click', s, 'cell_binds', 'Uses the Bindings page.') or changed
+
+    section('Heal range')
+    changed = slider('Out of range beyond (yalms)', s, 'max_range', 5.0, 30.0, '%.1f',
+        'Members farther than this are grayed out and cannot be targeted.') or changed
+    changed = slider('Distance turns yellow beyond', s, 'warn_range', 1.0, s.max_range, '%.1f') or changed
     return changed
 end
 
@@ -239,12 +335,11 @@ local function order_options(group, who)
     return out
 end
 
-local function tab_bindings(s, ctx)
+local function page_bindings(s, ctx)
     local changed = false
-    imgui.Text('Click casting for the Grid and Strip layouts')
-    hint('Click anywhere on a member. A KO\'d member always gets Raise (left = strongest, right = cheapest).')
-    hint('Heal mode only; buff mode uses the job\'s built-in buff bindings.')
-    imgui.Separator()
+    section('Click bindings')
+    hint('Used by the Grid layout, and by the Strip layout when "Cast on a plain row click" is on. A KO\'d member always gets Raise (left = strongest, right = cheapest). Buff mode uses the job\'s built-in buff bindings.')
+    imgui.Spacing()
     local preset = ctx.preset or spells.presets.generic
     local eff = bindings.effective({ bindings = s.bindings, buff_mode = false }, preset)
     for _, slot in ipairs(bindings.SLOTS) do
@@ -252,7 +347,8 @@ local function tab_bindings(s, ctx)
         local text = tostring(cur)
         local opts = bind_options()
         for _, o in ipairs(opts) do if o[1] == cur then text = o[2] end end
-        if imgui.BeginCombo(bindings.LABEL[slot] .. '##bind_' .. slot, text) then
+        label(bindings.LABEL[slot])
+        if imgui.BeginCombo('##bind_' .. slot, text) then
             for _, o in ipairs(opts) do
                 if imgui.Selectable(o[2] .. '##' .. slot .. o[1], o[1] == cur) then
                     s.bindings[slot] = o[1]
@@ -262,7 +358,7 @@ local function tab_bindings(s, ctx)
             imgui.EndCombo()
         end
     end
-    imgui.Separator()
+    imgui.Spacing()
     if imgui.Button('Reset bindings to job defaults') then
         s.bindings = {}
         changed = true
@@ -271,68 +367,114 @@ local function tab_bindings(s, ctx)
 end
 
 -- Reorder the spells in each flyout group. The order is the same for every party member.
-local function tab_order(s, ctx)
+local function page_spells(s, ctx)
     local changed = false
-    imgui.Text('Spell order in the hover flyout (same for every member)')
-    hint('Use the arrows to move a spell, x to remove it, and the list at the bottom of a group to add one.')
+    section('Spell order')
+    hint('The order of the buttons in the hover flyout (same for every member). ^ and v move a spell, x removes it, and "Add" at the bottom of a group adds one you know.')
     local preset = ctx.preset or spells.presets.generic
     for _, gdef in ipairs(spells.GROUPS) do
-        local id, label = gdef[1], gdef[2]
-        imgui.Separator()
-        imgui.Text(label)
-        -- Work on a copy of the effective list; store it only when the user changes something.
+        local id, label_text = gdef[1], gdef[2]
         local list = {}
         for i, k in ipairs(spells.group_keys(s, preset, id, ctx.player)) do list[i] = k end
-        local edited = false
-        local i = 1
-        while i <= #list do
-            local def = spells.defs[list[i]]
-            imgui.Text(string.format('%d. %s', i, def and def.name or list[i]))
-            imgui.SameLine()
-            if i > 1 and imgui.Button(string.format('^##up_%s_%d', id, i)) then
-                list[i], list[i - 1] = list[i - 1], list[i]; edited = true
-            end
-            imgui.SameLine()
-            if i < #list and imgui.Button(string.format('v##dn_%s_%d', id, i)) then
-                list[i], list[i + 1] = list[i + 1], list[i]; edited = true
-            end
-            imgui.SameLine()
-            if imgui.Button(string.format('x##rm_%s_%d', id, i)) then
-                table.remove(list, i); edited = true
-            else
-                i = i + 1
-            end
+        local header_open = true
+        if imgui.CollapsingHeader then
+            header_open = imgui.CollapsingHeader(string.format('%s  (%d)##hdr_%s', label_text, #list, id),
+                _G.ImGuiTreeNodeFlags_DefaultOpen or 32)
+        else
+            imgui.Text(label_text)
         end
-        if imgui.BeginCombo('Add spell##add_' .. id, '(choose)') then
-            for _, o in ipairs(order_options(id, ctx.player)) do
-                if imgui.Selectable(o[2] .. '##add' .. id .. o[1], false) then
-                    list[#list + 1] = o[1]; edited = true
+        if header_open then
+            local edited = false
+            local i = 1
+            while i <= #list do
+                local def = spells.defs[list[i]]
+                imgui.Text(string.format('%2d.  %s', i, def and def.name or list[i]))
+                imgui.SameLine(LABEL_W + 40 * sc)
+                if i > 1 and imgui.SmallButton(string.format('^##up_%s_%d', id, i)) then
+                    list[i], list[i - 1] = list[i - 1], list[i]; edited = true
+                end
+                imgui.SameLine()
+                if i < #list and imgui.SmallButton(string.format('v##dn_%s_%d', id, i)) then
+                    list[i], list[i + 1] = list[i + 1], list[i]; edited = true
+                end
+                imgui.SameLine()
+                if imgui.SmallButton(string.format('x##rm_%s_%d', id, i)) then
+                    table.remove(list, i); edited = true
+                else
+                    i = i + 1
                 end
             end
-            imgui.EndCombo()
-        end
-        if edited then s.spell_order[id] = list; changed = true end
-        if s.spell_order[id] and imgui.Button('Reset ' .. label .. '##rs_' .. id) then
-            s.spell_order[id] = nil; changed = true
+            imgui.SetNextItemWidth(CTRL_W)
+            if imgui.BeginCombo('Add##add_' .. id, '(choose a spell)') then
+                for _, o in ipairs(order_options(id, ctx.player)) do
+                    if imgui.Selectable(o[2] .. '##add' .. id .. o[1], false) then
+                        list[#list + 1] = o[1]; edited = true
+                    end
+                end
+                imgui.EndCombo()
+            end
+            if edited then s.spell_order[id] = list; changed = true end
+            if s.spell_order[id] then
+                imgui.SameLine()
+                if imgui.Button('Reset##rs_' .. id) then
+                    s.spell_order[id] = nil; changed = true
+                end
+            end
         end
     end
     return changed
 end
 
-local function tab_general(s, ctx)
+local function page_alerts(s)
     local changed = false
-    imgui.TextColored(WARN, 'Phase 1: interface preview with demo data.')
-    imgui.Text('Nothing is sent to the game and no game data is read yet.')
-    imgui.Separator()
-    changed = checkbox('Demo data', s, 'demo') or changed
-    changed = checkbox('Demo: pretend alliance debuffs are visible', s, 'demo_alliance_debuffs') or changed
-    imgui.Separator()
-    imgui.Text('Commands')
-    hint('/ch  /ch lock  /ch unlock  /ch scale <n|auto>  /ch layout <style>')
-    hint('/ch mode <party|alliance1|alliance2>  /ch help  /ch apicheck')
-    imgui.Separator()
+    local a = s.alerts
+    section('Alert bar')
+    changed = checkbox('Show the alert bar', a, 'enabled', 'A separate window listing who needs help.') or changed
+    changed = checkbox('Pulse critical alerts', a, 'pulse') or changed
+    changed = checkbox('Alert when a member is KO', a, 'raise_alert', 'Suggests Raise.') or changed
+    changed = checkbox('Alert on low HP', a, 'hp_alert') or changed
+    changed = slider_int('Low HP threshold (%)', s, 'hp_crit', 5, 95) or changed
+    changed = slider_int('Alerts shown at once', a, 'max', 1, 8) or changed
+
+    section('Debuffs that raise an alert')
+    hint('Untick to silence one. The suggested cure is shown in brackets.')
+    for _, key in ipairs(debuffs.order) do
+        local info = debuffs.info[key]
+        local spell = info.spell and spells.defs[info.spell] and spells.defs[info.spell].name or 'no spell'
+        local t = { not a.muted[key] }
+        if imgui.Checkbox(string.format('%s  (%s)##debuff_%s', info.label, spell, key), t) then
+            a.muted[key] = (not t[1]) or nil
+            changed = true
+        end
+    end
+    return changed
+end
+
+local function page_general(s, ctx)
+    local changed = false
+    section('Data')
+    changed = checkbox('Demo data', s, 'demo', 'On = fake party for trying the layout. Off = your real party.') or changed
+    if s.demo then
+        changed = checkbox('Demo: show alliance debuffs', s, 'demo_alliance_debuffs') or changed
+    end
+
+    section('Casting')
+    changed = checkbox('Click casts the spell', s, 'cast', 'Off = a click only prints what it would cast.') or changed
+    if s.demo then
+        with_color(WARN, function() imgui.TextWrapped('Demo data is on, so clicks never cast. Turn Demo data off first.') end)
+    elseif s.cast then
+        with_color(WARN, function() imgui.TextWrapped('Casting is ON: a click sends a normal /ma or /ja. Only use this where addons are allowed.') end)
+    else
+        hint('Casting is off. Clicks only log what they would do.')
+    end
+
+    section('Commands')
+    hint('/ch  /ch lock  /ch unlock  /ch scale <n|auto>  /ch layout <style>  /ch mode <party|alliance1|alliance2>')
+    hint('/ch cast  /ch demo  /ch buttons <size> [gap]  /ch slant <n>  /ch partydump  /ch apicheck  /ch help')
+
+    section('Reset')
     if reset_armed then
-        imgui.TextColored(WARN, 'This restores every setting.')
+        with_color(WARN, function() imgui.TextWrapped('This restores every setting to its default.') end)
         if imgui.Button('Yes, reset everything') then
             chconfig.reset(s)
             ctx.force_pos()
@@ -347,51 +489,119 @@ local function tab_general(s, ctx)
     return changed
 end
 
+M.PAGES = {
+    { 'Layout',     page_layout },
+    { 'Appearance', page_appearance },
+    { 'Flyout',     page_flyout },
+    { 'Spells',     page_spells },
+    { 'Bindings',   page_bindings },
+    { 'Alerts',     page_alerts },
+    { 'General',    page_general },
+}
+
 -- ---------------------------------------------------------------------------------------------
 -- window
 -- ---------------------------------------------------------------------------------------------
 
---- Runs one tab's contents. EndTabItem is always called, even if the contents throw, so ImGui's
--- begin/end stack stays balanced. Returns (changed, err).
-local function tab(name, fn, ...)
-    if not imgui.BeginTabItem(name) then return false, nil end
-    local ok, res = pcall(fn, ...)
-    imgui.EndTabItem()
-    if ok then return res and true or false, nil end
-    return false, name .. ' tab: ' .. tostring(res)
+--- Begins a bordered child region. Returns (began, visible). When began is true the caller MUST
+-- call imgui.EndChild(), even if visible is false.
+local function begin_child(id, w, h)
+    local ok, vis = pcall(imgui.BeginChild, id, { w, h }, _G.ImGuiChildFlags_Borders or 1)
+    return ok, ok and vis ~= false
 end
 
---- ctx = { geom, disp_w, disp_h, force_pos = function }
+--- The title row and the three quick toggles. Returns true when a setting changed.
+local function draw_header(s)
+    local changed = false
+    imgui.TextColored(ACCENT, 'ClickHeal')
+    imgui.SameLine()
+    with_color(DIM, function() imgui.Text('setup') end)
+
+    if toggle_button(s.demo and 'DEMO DATA' or 'LIVE DATA', not s.demo, 'data', GOOD) then
+        s.demo = not s.demo; changed = true
+    end
+    if imgui.IsItemHovered() then imgui.SetTooltip('Switch between a fake demo party and your real party.') end
+    imgui.SameLine()
+    local casting = s.cast and not s.demo
+    if toggle_button(casting and 'CASTING ON' or 'CASTING OFF', casting, 'cast', WARN) then
+        s.cast = not s.cast; changed = true
+    end
+    if imgui.IsItemHovered() then imgui.SetTooltip(s.demo and 'Needs live data.' or 'When on, a click really casts the spell.') end
+    imgui.SameLine()
+    if toggle_button(s.locked and 'LOCKED' or 'UNLOCKED', s.locked, 'lock', ACCENT) then
+        s.locked = not s.locked; changed = true
+    end
+    if imgui.IsItemHovered() then imgui.SetTooltip('Unlock to move and resize the window.') end
+    return changed
+end
+
+--- ctx = { geom, disp_w, disp_h, force_pos = function, preset, player }
 -- Returns (changed, err): changed = true when any setting changed (caller saves, debounced);
 -- err = a message when something threw (caller reports it once).
 function M.draw(s, ctx)
     if not M.open[1] then return false, nil end
 
-    local ui_scale = math.max(1.0, (ctx.disp_h or 1080) / layout.BASE_HEIGHT)
+    sc = math.max(1.0, (ctx.disp_h or 1080) / layout.BASE_HEIGHT)
+    LABEL_W, CTRL_W = math.floor(200 * sc), math.floor(250 * sc)
     local cond_first = _G.ImGuiCond_FirstUseEver or 4
-    imgui.SetNextWindowSize({ 520 * ui_scale, 600 * ui_scale }, cond_first)
+    imgui.SetNextWindowSize({ 760 * sc, 600 * sc }, cond_first)
 
     local changed, first_err = false, nil
-    local function note(c, e)
-        if c then changed = true end
-        if e and not first_err then first_err = e end
+    local function fail(e) if e and not first_err then first_err = e end end
+
+    local ncol, nvar = push_theme()
+    local flags = _G.ImGuiWindowFlags_NoCollapse or 0
+    local okb, visible = pcall(imgui.Begin, 'ClickHeal Setup', M.open, flags)
+    if not okb then
+        pop_theme(ncol, nvar)
+        error(visible, 0)
     end
-
-    local visible = imgui.Begin('ClickHeal Setup', M.open)
     if visible then
-        pcall(imgui.SetWindowFontScale, ui_scale)
+        pcall(imgui.SetWindowFontScale, sc)
 
-        if imgui.BeginTabBar('clickheal_tabs') then
-            note(tab('Layout',     tab_layout, s, ctx))
-            note(tab('Alerts',     tab_alerts, s))
-            note(tab('Order',      tab_order, s, ctx))
-            note(tab('Bindings',   tab_bindings, s, ctx))
-            note(tab('Appearance', tab_appearance, s))
-            note(tab('General',    tab_general, s, ctx))
-            imgui.EndTabBar()
-        end
+        local ok, err = pcall(function()
+            if draw_header(s) then changed = true end
+            imgui.Spacing()
+
+            -- Sidebar.
+            local nav_w = math.floor(138 * sc)
+            local nav_began, nav_vis = begin_child('##nav', nav_w, 0)
+            if nav_began then
+                if nav_vis then
+                    local nok, nerr = pcall(function()
+                        for i, p in ipairs(M.PAGES) do
+                            if imgui.Selectable('  ' .. p[1] .. '##nav' .. i, M.page == i, 0, { 0, math.floor(30 * sc) }) then
+                                M.page = i
+                            end
+                        end
+                    end)
+                    if not nok then fail('navigation: ' .. tostring(nerr)) end
+                end
+                imgui.EndChild()
+            end
+            imgui.SameLine()
+
+            -- Content.
+            local c_began, c_vis = begin_child('##content', 0, 0)
+            if c_began then
+                if c_vis then
+                    local aw = xy(imgui.GetContentRegionAvail())
+                    if aw and aw > 0 then CTRL_W = math.max(math.floor(160 * sc), math.floor(aw - LABEL_W - 20 * sc)) end
+                    local page = M.PAGES[M.page] or M.PAGES[1]
+                    local pok, res = pcall(page[2], s, ctx)
+                    if pok then
+                        if res then changed = true end
+                    else
+                        fail(page[1] .. ' page: ' .. tostring(res))
+                    end
+                end
+                imgui.EndChild()
+            end
+        end)
+        if not ok then fail('setup panel: ' .. tostring(err)) end
     end
     imgui.End()
+    pop_theme(ncol, nvar)
 
     if changed then chconfig.sanitize(s) end
     return changed, first_err

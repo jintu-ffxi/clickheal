@@ -409,8 +409,13 @@ local function draw_debuff_strip(f, m, x, y, w, h, dim)
             end
             cx = cx + iw + gap
         else
-            local fg, bg = badge_colors(pal, info.sev)
-            chip(f, cx, y, h, label, fg, bg, dim)
+            -- Dark backing with a colored edge and text: readable on any HP fill color.
+            local col = (info.sev <= 2) and sev_color(pal, info.sev) or pal.text
+            local w = tw
+            g.rect_filled(cx, y, w, h, theme.pack(0.04, 0.05, 0.07, 0.88 * dim), floor(3 * s))
+            outline(g, cx, y, w, h, max(1, floor(1 * s)), A(col, 0.85 * dim))
+            local lw, lh = g.text_size(label)
+            g.text(cx + floor((w - lw) / 2), y + floor((h - lh) / 2), A(col, dim), label)
             cx = cx + tw + gap
         end
         shown = shown + 1
@@ -854,7 +859,7 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
     local th = select(2, g.text_size('Ag'))
     local sl = floor((f.cfg.slant or 0) * s)      -- how far the top edge leans (0 = square rows)
     local rnd = floor(4 * s)                      -- corner rounding for square rows
-    local bw = floor(36 * s)                      -- job block
+    local bw = floor(32 * s)                      -- job block
     local x0 = r.x + bw + floor(3 * s)            -- slanted row starts here
     local rw = r.w - bw - floor(3 * s)
     local hot = hovering(f, r.x, r.y, r.w, r.h)
@@ -878,14 +883,25 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
 
     -- The whole row is the HP bar: it fills from the left and shifts green -> yellow -> orange -> red.
     local frac = max(0, min(1, (m.hpp or 0) / 100))
-    if not m.dead and not m.zone_diff and frac > 0 then
-        local fw = floor((rw - sl) * frac) + sl
-        local fc, fa = theme.hp_fill(pal, frac), 0.62 * dim
-        if out_of_range then
-            -- Too far to cast on: wash the color out to gray so it reads as "not available".
-            fc, fa = theme.mix(fc, theme.pack(0.50, 0.50, 0.52, 1), 0.85), 0.40
+    if not m.dead and not m.zone_diff then
+        local ins = (sl > 0) and 0 or max(1, floor(2 * s))
+        local tx, ty, tw_, th_ = x0 + ins, r.y + ins, rw - 2 * ins, r.h - 2 * ins
+        local rr = max(0, rnd - ins)
+        -- Dark track behind the fill, so an empty bar still reads as a bar.
+        para(f, tx, ty, tw_, th_, sl, theme.pack(0.04, 0.05, 0.07, 0.55 * dim), rr)
+        if frac > 0 then
+            local fw = floor((tw_ - sl) * frac) + sl
+            -- Deepened so the white text on top stays readable at every HP level.
+            local fc, fa = theme.hp_fill(pal, frac), 0.96 * dim
+            if out_of_range then
+                -- Too far to cast on: wash the color out to gray so it reads as "not available".
+                fc, fa = theme.mix(fc, theme.pack(0.42, 0.42, 0.45, 1), 0.85), 0.55
+            end
+            para(f, tx, ty, fw, th_, sl, A(fc, fa), rr)
+            if sl <= 0 and fw > 2 * rr then   -- a faint light edge along the top of the fill
+                g.rect_filled(tx + rr, ty, fw - 2 * rr, max(1, floor(1 * s)), theme.pack(1, 1, 1, 0.16 * dim), 0)
+            end
         end
-        para(f, x0, r.y, fw, r.h, sl, A(fc, fa), rnd)
     end
     local crit = (not m.dead) and (not m.zone_diff) and m.hpp and m.hpp <= f.cfg.hp_crit
     if crit then
@@ -893,14 +909,6 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
         para_outline(f, x0, r.y, rw, r.h, sl, theme.alpha(pal.bad, 0.30 + 0.70 * p), max(1, floor(1.5 * s)))
     elseif hot or sel then
         para_outline(f, x0, r.y, rw, r.h, sl, A(pal.text, 0.85), max(1, floor(1.5 * s)))
-    else
-        -- A critical / important debuff gets a quiet amber or red outline.
-        local list = sorted_debuffs(m)
-        local top = list[1] and debuffs.info[list[1]]
-        if top and top.sev <= 2 and not m.dead and not m.zone_diff then
-            local p = f.cfg.alerts.pulse and pulse(f) or 1
-            para_outline(f, x0, r.y, rw, r.h, sl, A(sev_color(pal, top.sev), (0.45 + 0.45 * p) * dim), max(1, floor(1.5 * s)))
-        end
     end
 
     -- Edge of the slanted row at a given y (so text and bars follow the lean).
@@ -917,23 +925,25 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
     local hpt = hp_text(m)
     local right = xr - g.text_size(hpt)
     g.text(right + 1, y1 + 1, theme.pack(0, 0, 0, 0.75 * dim), hpt)
-    g.text(right, y1, A(hp_text_color(f, m), dim), hpt)
+    g.text(right, y1, A(m.dead and hp_text_color(f, m) or pal.text, dim), hpt)
     right = right - floor(6 * s)
 
     local name = m.name:upper()
     local nw = g.text_size(name)
-    local dist_w = f.cfg.show_dist and (g.text_size(dist_text(m)) + floor(6 * s)) or 0
+    local show_d = f.cfg.show_dist and not m.is_you
+    local dist_w = show_d and (g.text_size(dist_text(m)) + floor(6 * s)) or 0
     local chips_left = right
 
     local room = chips_left - xl - floor(4 * s)
     local shown = fit(g, name, room - dist_w)
     g.text(xl + 1, y1 + 1, theme.pack(0, 0, 0, 0.75 * dim), shown)
     g.text(xl, y1, name_color(f, m, dim), shown)
-    if f.cfg.show_dist then
+    if show_d then
         local dt = dist_text(m)
         local dx = xl + g.text_size(shown) + floor(6 * s)
         if dx + g.text_size(dt) <= chips_left then
-            local dc = out_of_range and pal.bad or (near_limit and pal.warn or pal.text_dim)
+            local dc = out_of_range and pal.bad or (near_limit and pal.warn or A(pal.text, 0.72))
+            g.text(dx + 1, y1 + 1, theme.pack(0, 0, 0, 0.6 * dim), dt)
             g.text(dx, y1, A(dc, m.zone_diff and dim or 1), dt)
         end
     end

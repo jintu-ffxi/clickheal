@@ -1559,7 +1559,7 @@ test('strip: the whole row is the HP bar and its color goes green -> yellow -> o
             seen[c] = true
         end
         eq(theme.hp_fill(pal, 1.0), theme.hp_fill(pal, 1.5), 'clamped')
-        eq(theme.hp_fill(pal, 0.0), pal.bad, 'empty is the danger color')
+        eq(theme.hp_fill(pal, 0.0), pal.hp_stops and pal.hp_stops[4] or pal.bad, 'empty is the danger color')
     end
     local pal = theme.get('modern')
     truthy(theme.hp_fill(pal, 0.9) ~= theme.hp_fill(pal, 0.45) and theme.hp_fill(pal, 0.45) ~= theme.hp_fill(pal, 0.1))

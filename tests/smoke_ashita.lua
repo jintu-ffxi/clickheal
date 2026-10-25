@@ -116,9 +116,15 @@ package.preload['imgui'] = function()
         EndTabBar = function() bump('EndTabBar') end,
         BeginTabItem = function() bump('BeginTabItem'); return true end,
         EndTabItem = function() bump('EndTabItem') end,
+        BeginChild = function() bump('BeginChild'); return true end,
+        EndChild = function() bump('EndChild') end,
+        PushStyleColor = function() bump('PushStyleColor'); return true end,
+        PopStyleColor = function(n) bump('PopStyleColor', n or 1) end,
+        CollapsingHeader = function() return true end,
+        GetContentRegionAvail = function() return 560, 400 end,
         BeginCombo = function() bump('BeginCombo'); return true end,
         EndCombo = function() bump('EndCombo') end,
-        Selectable = function() return sim.interact end,
+        Selectable = function(l) return sim.interact and not tostring(l):find('##nav', 1, true) end,
         Checkbox = function(_, t) if sim.interact then t[1] = not t[1]; widget_value_flips = widget_value_flips + 1; return true end return false end,
         SliderFloat = function(_, t, lo, hi) if sim.interact then t[1] = hi; return true end return false end,
         SliderInt = function(_, t, lo, hi) if sim.interact then t[1] = hi; return true end return false end,
@@ -158,6 +164,8 @@ local function balanced()
     eq(calls.BeginTabItem, calls.EndTabItem, 'BeginTabItem/EndTabItem')
     eq(calls.BeginTooltip, calls.EndTooltip, 'BeginTooltip/EndTooltip')
     eq(calls.BeginCombo, calls.EndCombo, 'BeginCombo/EndCombo')
+    eq(calls.BeginChild, calls.EndChild, 'BeginChild/EndChild')
+    eq(calls.PushStyleColor, calls.PopStyleColor, 'PushStyleColor/PopStyleColor')
 end
 
 -- ---------------------------------------------------------------------------------------------
@@ -240,14 +248,20 @@ test('/ch layout and mode changes take effect on the next frame without errors',
     balanced(); eq(errors_logged(), 0)
 end)
 
-test('setup panel: opens, every widget path runs, stays balanced', function()
+test('setup panel: every page draws, every widget path runs, stays balanced', function()
+    local configui = require('ch.configui')
     run_command('/ch')                       -- toggles the panel open
     for _ = 1, 5 do frame_tick() end
-    truthy(calls.BeginTabItem >= 20, 'tabs should have been drawn')
-    sim.interact = true                      -- every widget reports "changed" and flips its value
-    for _ = 1, 30 do frame_tick() end
-    sim.interact = false
+    truthy(calls.BeginChild >= 2, 'sidebar and content should have been drawn')
+    for i = 1, #configui.PAGES do
+        configui.page = i
+        sim.interact = true                  -- every widget reports "changed" and flips its value
+        for _ = 1, 6 do configui.page = i; frame_tick() end
+        sim.interact = false
+        for _ = 1, 3 do frame_tick() end
+    end
     truthy(widget_value_flips > 0, 'checkboxes should have flipped')
+    configui.page = 1
     balanced(); eq(errors_logged(), 0)
 end)
 
