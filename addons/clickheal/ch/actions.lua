@@ -97,12 +97,12 @@ function actions.perform(ev, ctx)
             casting.queue(ev, ctx.now)
             return 'queued'
         end
-        ctx.log(string.format("[ClickHeal] Can't cast %s yet: %s", def.name, spellstate.describe(ev.state, ev.detail)))
+        ctx.log(string.format("Can't cast %s yet: %s", def.name, spellstate.describe(ev.state, ev.detail)))
         return 'blocked'
     end
 
     if ev.state and ev.state ~= 'ready' then
-        ctx.log(string.format("[ClickHeal demo] Can't cast %s on %s: %s",
+        ctx.log(string.format("Can't cast %s on %s: %s",
             def.name, who, spellstate.describe(ev.state, ev.detail)))
         return 'blocked'
     end
@@ -110,7 +110,7 @@ function actions.perform(ev, ctx)
     local token = def.selfonly and '<me>' or actions.target_token(ev.slot)
     if def.selfonly then who = 'you' end
     if m and m.demo and not def.selfonly then
-        ctx.log(string.format('[ClickHeal demo] %s -> %s (demo member). Nothing was sent to the game.', def.name, who))
+        ctx.log(string.format('%s -> %s (demo member). Nothing was sent to the game.', def.name, who))
         casting.start(def, ctx.now, ctx.cfg)
         return 'cast'
     end
@@ -121,7 +121,7 @@ function actions.perform(ev, ctx)
         return 'sent'
     end
 
-    ctx.log(string.format('[ClickHeal demo] %s -> %s (%s). Nothing was sent to the game.', def.name, who, token))
+    ctx.log(string.format('%s -> %s (%s). Nothing was sent to the game.', def.name, who, token))
 
     if ctx.demo then ctx.demo.cast(def, ctx.now) end
     casting.start(def, ctx.now, ctx.cfg)
