@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3
+
+- The cast progress bar now follows the game: it starts when the server starts your cast, fills with the game's own cast bar, turns red if the cast is interrupted, and ends when the cast lands. It no longer runs ahead and snaps back, including on the first cast after loading and on a slow connection.
+- Casts you start from a macro or the game's own menu get a bar too.
+- `/ch status` shows how many cast start, interrupt and landing packets were seen, which helps if the bar ever looks wrong.
+
 ## 1.0.2
 
 - The cast progress bar no longer jumps back and restarts when you start a cast. It now follows the game's own cast bar and waits for it to start.
