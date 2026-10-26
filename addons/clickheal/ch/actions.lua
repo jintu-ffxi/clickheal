@@ -56,6 +56,17 @@ function actions.perform(ev, ctx)
         return 'toggled'
     end
 
+    if ev.type == 'set_layout' then
+        if ctx.cfg and type(ev.scale) == 'number' then
+            ctx.cfg.scale = ev.scale
+            if ev.orientation == 'columns' or ev.orientation == 'stacked' or ev.orientation == 'rows' then
+                ctx.cfg.orientation = ev.orientation
+            end
+            if ctx.changed then ctx.changed() end
+        end
+        return 'toggled'
+    end
+
     if ev.type == 'set_scale' then
         if ctx.cfg and type(ev.value) == 'number' then
             ctx.cfg.scale = ev.value

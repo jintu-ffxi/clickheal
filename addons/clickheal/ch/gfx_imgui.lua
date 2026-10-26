@@ -210,9 +210,10 @@ function M.begin_surface(id, x, y, w, h, opts)
     -- From here on Begin has happened: the caller MUST call end_surface() whatever we return.
     if not visible then return nil end
 
-    font_pushed = fonts.push()
+    local fk
+    font_pushed, fk = fonts.push(fonts.FRAME_PX * font_scale)
     local okp, px_, py_ = pcall(function()
-        pcall(imgui.SetWindowFontScale, font_scale)
+        pcall(imgui.SetWindowFontScale, font_pushed and fk or font_scale)
         draw_list = imgui.GetWindowDrawList()
         local a, b = imgui.GetWindowPos()
         return xy(a, b)
@@ -355,10 +356,10 @@ end
 
 function M.tooltip(lines, scale)
     imgui.BeginTooltip()
-    local fp = fonts.push()
+    local fp, fk = fonts.push(fonts.FRAME_PX * font_scale)
     -- Protected so EndTooltip always runs, even if a call inside throws.
     pcall(function()
-        pcall(imgui.SetWindowFontScale, font_scale)
+        pcall(imgui.SetWindowFontScale, fp and fk or font_scale)
         for _, line in ipairs(lines) do imgui.Text((tostring(line):gsub('%%', '%%%%'))) end
     end)
     fonts.pop(fp)

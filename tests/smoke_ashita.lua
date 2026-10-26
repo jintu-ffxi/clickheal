@@ -186,6 +186,7 @@ test('load announces that casting is off until enabled', function()
 end)
 
 test('default frames draw both windows, balanced, with no errors', function()
+    run_command('/ch demo on')
     run_command('/ch alerts on')    -- the alert window is optional (off by default)
     for _ = 1, 30 do frame_tick() end
     truthy(calls.rect > 500 and calls.text > 100, 'expected real drawing, got ' .. calls.rect .. ' rects / ' .. calls.text .. ' texts')
@@ -205,7 +206,7 @@ test('commands: /ch is consumed, other commands are left alone', function()
 end)
 
 test('strip rows with the spell bar draw balanced and error-free in every mode', function()
-    run_command('/ch reset confirm'); run_command('/ch lock'); run_command('/ch bar on')
+    run_command('/ch reset confirm'); run_command('/ch demo on'); run_command('/ch lock'); run_command('/ch bar on')
     for _, mode in ipairs({ 'alliance2', 'party' }) do
         run_command('/ch mode ' .. mode)
         for _, tab in ipairs({ 'heal', 'cleanse', 'buff', 'raise' }) do
@@ -218,7 +219,7 @@ test('strip rows with the spell bar draw balanced and error-free in every mode',
 end)
 
 test('hovering a Strip row opens the flyout window, clicking a tile logs a cast, and it all stays balanced', function()
-    run_command('/ch reset confirm'); run_command('/ch lock')
+    run_command('/ch reset confirm'); run_command('/ch demo on'); run_command('/ch lock')
     local layout = require('ch.layout')
     local g = layout.compute({ orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
     local c = g.cards[1]
@@ -251,7 +252,7 @@ end)
 test('the hover flyout still opens with every "other ways to cast" option switched on', function()
     local layout = require('ch.layout')
     for _, setup in ipairs({ { 'bar on' }, { 'cellbinds on' }, { 'buffmode buff' }, { 'bar on', 'cellbinds on', 'buffmode buff' } }) do
-        run_command('/ch reset confirm'); run_command('/ch lock')
+        run_command('/ch reset confirm'); run_command('/ch demo on'); run_command('/ch lock')
         for _, c in ipairs(setup) do run_command('/ch ' .. c) end
         local g = layout.compute({ orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0,
             spellbar = setup[1] == 'bar on' }, 1080)
@@ -300,7 +301,7 @@ test('/ch apicheck runs and reports', function()
 end)
 
 test('a plain row click logs the cast and sends nothing to the game', function()
-    run_command('/ch reset confirm')
+    run_command('/ch reset confirm'); run_command('/ch demo on')
     run_command('/ch cellbinds on')   -- plain clicks cast the bound spell (off by default: the flyout is the main way)
     run_command('/ch lock')
     for _ = 1, 3 do frame_tick() end
@@ -343,7 +344,7 @@ test('a throwing ImGui call is reported once and leaves the style stack balanced
 end)
 
 test('a throwing tooltip call still ends the tooltip', function()
-    run_command('/ch reset confirm'); run_command('/ch lock')
+    run_command('/ch reset confirm'); run_command('/ch demo on'); run_command('/ch lock')
     local layout = require('ch.layout')
     local g = layout.compute({ orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
     local c = g.cards[1]

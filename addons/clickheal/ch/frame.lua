@@ -13,9 +13,45 @@ local alerts  = require('ch.alerts')
 
 local frame = {}
 
+local SAMPLE_DEBUFFS = {
+    { 'poison' }, { 'slow', 'paralysis' }, { 'silence' }, { 'blindness', 'poison', 'sleep' },
+    { 'doom' }, { 'curse', 'weight' }, { 'bind' },
+}
+local SAMPLE_BUFFS = {
+    { 'haste', 'protect', 'shell' }, { 'regen', 'refresh' }, { 'protect', 'shell', 'stoneskin', 'blink' },
+}
+
+--- Debug page: gives members sample debuffs / buffs so the status UI can be tested on any roster.
+-- Returns the list unchanged when no switch is on; otherwise shallow copies of the members.
+function frame.apply_debug(list, cfg)
+    local d = cfg.debug
+    if not d or not (d.force_debuffs or d.force_buffs) then return list end
+    local out = {}
+    for i, m in ipairs(list) do
+        if m.active and not m.dead then
+            local c = {}
+            for k, v in pairs(m) do c[k] = v end
+            if d.force_debuffs then
+                c.debuffs = {}
+                for _, k in ipairs(SAMPLE_DEBUFFS[(m.slot % #SAMPLE_DEBUFFS) + 1]) do c.debuffs[#c.debuffs + 1] = k end
+                c.debuff_rem = c.debuff_rem or {}
+                c.has_buff_data = true
+            end
+            if d.force_buffs then
+                c.buffs = {}
+                for _, k in ipairs(SAMPLE_BUFFS[(m.slot % #SAMPLE_BUFFS) + 1]) do c.buffs[#c.buffs + 1] = { key = k, rem = 60, total = 120 } end
+                c.has_buff_data = true
+            end
+            m = c
+        end
+        out[i] = m
+    end
+    return out
+end
+
 --- source: { roster = function(t, cfg) -> array, player = function(t) -> table }
 function frame.build(cfg, source, t, disp_w, disp_h, dismissed)
-    local roster_list = source.roster(t, cfg)
+    local roster_list = frame.apply_debug(source.roster(t, cfg), cfg)
     local by_slot, present = {}, {}
     for _, m in ipairs(roster_list) do
         by_slot[m.slot] = m
@@ -33,9 +69,12 @@ function frame.build(cfg, source, t, disp_w, disp_h, dismissed)
         spellbar = cfg.spellbar,
         row_w = cfg.row_w, row_h = (cfg.skin == 'hairline') and cfg.hl_row_h or cfg.row_h, debuff_icon = cfg.debuff_icon, buff_icon = cfg.buff_icon,
         mp_h = cfg.show_mp and cfg.mp_height or 0,
-        mp_pct = (cfg.show_mp and cfg.show_mp_pct) and cfg.mp_pct_scale or nil,
+        mp_pct = cfg.show_mp_pct and cfg.mp_pct_scale or nil,
     }
     lopts.skin, lopts.triage, lopts.hl_pct, lopts.name_scale = cfg.skin, cfg.triage, cfg.hl_pct, cfg.name_scale
+    lopts.tri_list_h = cfg.triage_opts and cfg.triage_opts.list_h
+    lopts.tri_list_icons = cfg.triage_opts and cfg.triage_opts.list_icons
+    lopts.font_mult = cfg.font_mult
     lopts.header = cfg.show_header or not cfg.locked   -- unlocking always brings the bar back so you can move and lock
     if cfg.triage then
         local shown, n = {}, 0

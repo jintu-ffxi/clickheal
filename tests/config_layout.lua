@@ -20,11 +20,14 @@ end
 local sim = { char_w = 7, win_w = nil, sc = 1, interact = false }
 local S                      -- per-frame state
 local violations
+local seen_ids, seen_texts = {}, {}   -- control ids and visible texts drawn since the last reset
 
 local function reset_frame()
     S = { regions = {}, font = 1, next_w = nil, same = false, sl_x = nil, last_end = 0, combo_w = nil, req = nil, cons = nil }
     violations = {}
 end
+
+local function note_id(l) local id = tostring(l):match('##(.+)$'); if id then seen_ids[id] = true end end
 
 local function vis(label)
     label = tostring(label)
@@ -96,16 +99,18 @@ package.preload['imgui'] = function()
         Spacing = function() S.same = false end,
         Separator = function() S.same = false end,
         IsItemHovered = function() return false end,
-        Text = function(s) place(tw(s), 'Text "' .. tostring(s) .. '"') end,
-        TextColored = function(_, s) place(tw(s), 'TextColored "' .. tostring(s) .. '"') end,
-        TextWrapped = function() place(1, 'TextWrapped') end,
+        Text = function(s) seen_texts[#seen_texts + 1] = tostring(s); place(tw(s), 'Text "' .. tostring(s) .. '"') end,
+        TextColored = function(_, s) seen_texts[#seen_texts + 1] = tostring(s); place(tw(s), 'TextColored "' .. tostring(s) .. '"') end,
+        TextWrapped = function(s) seen_texts[#seen_texts + 1] = tostring(s); place(1, 'TextWrapped') end,
         Checkbox = function(l, t)
+            note_id(l)
             place(20 * sim.sc + label_w(l), 'Checkbox ' .. vis(l))
             if sim.interact then t[1] = not t[1]; return true end
             return false
         end,
-        SliderFloat = function(l, t, lo, hi) place(take_width() + label_w(l), 'SliderFloat ' .. l); if sim.interact then t[1] = hi; return true end return false end,
-        SliderInt = function(l, t, lo, hi) place(take_width() + label_w(l), 'SliderInt ' .. l); if sim.interact then t[1] = hi; return true end return false end,
+        ColorEdit3 = function(l, c) seen_ids[(tostring(l):match('##(.-)%d*$'))] = true; place(take_width() + label_w(l), 'ColorEdit3 ' .. l); return false end,
+        SliderFloat = function(l, t, lo, hi) note_id(l); place(take_width() + label_w(l), 'SliderFloat ' .. l); if sim.interact then t[1] = hi; return true end return false end,
+        SliderInt = function(l, t, lo, hi) note_id(l); place(take_width() + label_w(l), 'SliderInt ' .. l); if sim.interact then t[1] = hi; return true end return false end,
         Button = function(l) place(tw(vis(l)) + 20 * sim.sc, 'Button ' .. vis(l)); return sim.interact end,
         SmallButton = function(l) place(tw(vis(l)) + 20 * sim.sc, 'SmallButton ' .. vis(l)); return false end,
         CollapsingHeader = function(l)
@@ -115,6 +120,7 @@ package.preload['imgui'] = function()
             return true
         end,
         BeginCombo = function(l, preview)
+            note_id(l)
             local w = take_width()
             place(w + label_w(l), 'Combo ' .. l)
             if tw(preview) + 30 * sim.sc > w then violate('Combo preview clipped "' .. tostring(preview) .. '"', 0, tw(preview) + 30 * sim.sc) end
@@ -204,6 +210,63 @@ test('setup panel drops labels above their controls when the window is narrow', 
     for i = 1, #configui.PAGES do
         local v = run_page(i, 1.0, 9, 1, {})
         if #v > 0 then error('page ' .. i .. ': ' .. v[1]) end
+    end
+end)
+
+test('setup panel: nothing overruns at any text size (80% to 250%)', function()
+    for _, zoom in ipairs({ 80, 100, 150, 250 }) do
+        for _, sc in ipairs({ 1.0, 2.0 }) do
+            for i = 1, #configui.PAGES do
+                for _, win_w in ipairs({ 1, 1400 * sc }) do
+                    local v = run_page(i, sc, 7, win_w, { demo = false, ui_zoom = zoom })
+                    if #v > 0 then error(string.format('zoom %d, scale %.1f, page %d: %s', zoom, sc, i, v[1])) end
+                end
+            end
+        end
+    end
+end)
+
+test('setup panel: no label or option text is cut short with ".."', function()
+    seen_texts = {}
+    for i = 1, #configui.PAGES do
+        for _, sc in ipairs({ 1.0, 2.0 }) do
+            run_page(i, sc, 7, nil, { demo = false })
+        end
+    end
+    local bad = {}
+    for _, t in ipairs(seen_texts) do
+        if t:sub(-2) == '..' then bad[#bad + 1] = t end
+    end
+    if #bad > 0 then error('clipped: ' .. table.concat(bad, ' | ', 1, math.min(5, #bad))) end
+end)
+
+test('setup panel: every user-facing setting has a control somewhere', function()
+    seen_ids = {}
+    local variants = {
+        { demo = false }, { demo = true }, { skin = 'hairline' }, { show_mp_pct = true }, { show_buff_bar = true },
+        { auto_scale = false },
+    }
+    for _, over in ipairs(variants) do
+        for i = 1, #configui.PAGES do run_page(i, 1.0, 7, nil, over) end
+    end
+    -- Settings that are saved but deliberately have no control: positions, per-spell data, and options
+    -- retired from the UI (their code is still there).
+    local hidden = {
+        pos = true, alert_pos = true, spell_order = true, alerts = true, triage_opts = true, debug = true,
+        spellbar = true, cell_binds = true, buff_mode = true, hide_empty_groups = true, show_empty_slots = true,
+        bar_tab = true, binds = true, bindings = true, version = true,
+    }
+    local missing = {}
+    for k in pairs(chconfig.defaults) do
+        if not hidden[k] and not seen_ids[k] then missing[#missing + 1] = k end
+    end
+    table.sort(missing)
+    if #missing > 0 then error('no control for: ' .. table.concat(missing, ', ')) end
+    -- And the nested groups: every key inside them is editable too.
+    for _, group in ipairs({ 'triage_opts', 'debug' }) do
+        for k in pairs(chconfig.defaults[group]) do
+            if k ~= 'spells' and k ~= 'levels' and not seen_ids[k] then error('no control for ' .. group .. '.' .. k) end
+        end
     end
 end)
 

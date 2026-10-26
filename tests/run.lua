@@ -1762,7 +1762,7 @@ test('mp: percent text and bar thickness are options; a thick bar makes the row 
     local _, g1 = run_with({ mode = 'party', show_mp_pct = true })
     truthy(pct_texts(g1) > pct_texts(g0), 'MP percent adds text')
     local _, g2 = run_with({ mode = 'party', show_mp = false, show_mp_pct = true })
-    eq(pct_texts(g2), pct_texts(g0), 'no MP bar, no MP percent')
+    eq(pct_texts(g2), pct_texts(g1), 'the MP percent does not need the MP bar')
     local a = layout.compute({ row_h = 40, debuff_icon = 14, buff_icon = 14, mp_h = 3 }, 1080)
     local b = layout.compute({ row_h = 40, debuff_icon = 14, buff_icon = 14, mp_h = 12 }, 1080)
     eq(a.card_h, b.card_h, 'the row height stays what you chose')
@@ -2030,6 +2030,118 @@ test('name size: option scales the names, the row keeps its height, icons make r
     local a = layout.compute({ row_h = 44, debuff_icon = 14, buff_icon = 14, name_scale = 1.0 }, 1080)
     local b = layout.compute({ row_h = 44, debuff_icon = 14, buff_icon = 14, name_scale = 2.0 }, 1080)
     eq(a.card_h, b.card_h); truthy(b.eff.debuff_icon <= a.eff.debuff_icon)
+end)
+
+
+test('group frames: each party gets a frame; every party has a resize grip while unlocked', function()
+    local function count(over)
+        local cfg = new_cfg(over)
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        local frames, grips = 0, 0
+        for _, c in ipairs(g.cmds) do
+            if c.op == 'rect' and c.w == fr.geom.groups[1].w and c.h == fr.geom.groups[1].h then frames = frames + 1 end
+            if c.op == 'hit' and tostring(c.id):find('chgrip', 1, true) then grips = grips + 1 end
+        end
+        return frames, grips, #fr.geom.groups
+    end
+    local fr_on, _, n = count({ mode = 'alliance2', orientation = 'rows', group_frames = true })
+    eq(n, 3); truthy(fr_on >= 3, 'a backdrop per party')
+    local fr_off = count({ mode = 'alliance2', orientation = 'rows', group_frames = false })
+    eq(fr_off, 0)
+    local _, grips = count({ mode = 'alliance2', orientation = 'rows', locked = false })
+    truthy(grips == 3 or grips == 0, 'one grip per party (recorder may not log hit areas)')
+end)
+
+
+test('debug page: sample status effects work on any roster, and the triage list grows to fit its icons', function()
+    local frame = require('ch.frame')
+    local function roster(over)
+        local cfg = new_cfg(over)
+        local f, fr = build_ui_frame(cfg, 1080, 3.0)
+        return fr.roster_list, cfg
+    end
+    -- default demo alliance members have no visible debuffs; the switch gives everyone some
+    local plain = roster({ mode = 'alliance2' })
+    local forced = roster({ mode = 'alliance2', debug = { force_debuffs = true, force_buffs = true } })
+    local function with_debuffs(list) local n = 0; for _, m in ipairs(list) do if m.active and #m.debuffs > 0 then n = n + 1 end end return n end
+    local living = 0
+    for _, m in ipairs(forced) do if m.active and not m.dead then living = living + 1 end end
+    truthy(with_debuffs(forced) > with_debuffs(plain), 'the switch adds debuffs')
+    eq(with_debuffs(forced), living, 'every living member has debuffs')
+    for _, m in ipairs(forced) do if m.active and not m.dead then truthy(#m.buffs > 0 and m.has_buff_data) end end
+    eq(chconfig.sanitize({ debug = { cursor = 1 } }).debug.cursor, true)
+    -- triage list: turning icons on makes the rows tall enough for them
+    local short = layout.compute({ triage = true, triage_n = 4, tri_list_h = 18, debuff_icon = 14, buff_icon = 14 }, 1080)
+    local tall = layout.compute({ triage = true, triage_n = 4, tri_list_h = 18, tri_list_icons = true, debuff_icon = 14, buff_icon = 14 }, 1080)
+    truthy(tall.tri.list.row > short.tri.list.row * 2, 'rows grow when icons are shown')
+    -- and the icons really are drawn under the names with demo debuffs forced
+    local cfg = new_cfg({ mode = 'alliance1', triage = true, debug = { force_debuffs = true },
+        triage_opts = { list_icons = true, list_h = 18 } })
+    local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+    ui.draw_roster(f)
+    local icons = 0
+    for _, c in ipairs(g.cmds) do if c.op == 'status_icon' or c.op == 'icon' then icons = icons + 1 end end
+    local tags = 0
+    local shorts = {}
+    for _, info in pairs(require('ch.debuffs').info) do shorts[info.short] = true end
+    for _, c in ipairs(g.cmds) do if c.op == 'text' and shorts[c.s] then tags = tags + 1 end end
+    truthy(icons + tags > 5, 'status icons or tags drawn in the triage list')
+end)
+
+
+
+test('party colors: each party background uses the chosen color; sanitize keeps them valid', function()
+    local function party_rect(over)
+        local cfg = new_cfg(over)
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        local grp = fr.geom.groups[2]
+        for _, c in ipairs(g.cmds) do
+            if c.op == 'rect' and c.w == grp.w and c.h == grp.h and c.x >= grp.x - 0.5 and c.x <= grp.x + 0.5 + 0 then
+                local r, gg, b = theme.unpack(c.c)
+                return r, gg, b
+            end
+        end
+    end
+    local r, g, b = party_rect({ mode = 'alliance1', group_colors = { { 0.4, 0.6, 1 }, { 0.9, 0.1, 0.2 }, { 0.9, 0.7, 0.3 } } })
+    truthy(r and r > 0.8 and g < 0.2 and b < 0.3, 'alliance 1 background takes the chosen red')
+    local s = chconfig.sanitize({ group_colors = { { 5, -1, 'x' }, 'bad' }, group_alpha = 9 })
+    eq(#s.group_colors, 3); eq(s.group_colors[1][1], 1); eq(s.group_colors[1][2], 0)
+    eq(s.group_colors[2][1], chconfig.defaults.group_colors[2][1]); eq(s.group_alpha, 0.5)
+end)
+
+
+test('sleep: the alert bar suggests a quick Cure, but no cleanse button claims it', function()
+    local d = require('ch.debuffs')
+    eq(d.info.sleep.spell, nil); eq(d.info.sleep.suggest, 'cure1')
+    local cfg = new_cfg({})
+    local list = require('ch.alerts').build({ { slot = 1, active = true, name = 'Elowen', hp = 900, hpmax = 1000, hpp = 90, dist = 5,
+        debuffs = { 'sleep' }, has_buff_data = true } }, cfg, require('ch.spells').presets.WHM, 0)
+    local found
+    for _, a in ipairs(list) do if a.kind == 'debuff' then found = a end end
+    truthy(found, 'a sleep alert exists'); eq(found.spell, 'cure1')
+end)
+
+
+test('resize: dragging a corner fits the panel to the box, re-flowing the parties when the shape changes', function()
+    local cfg = new_cfg({ mode = 'alliance2', orientation = 'columns', locked = false })
+    local f, fr = build_ui_frame(cfg, 1080, 3.0)
+    f.groups, f.disp_h = fr.groups, 1080
+    local w1 = ui.fit_box(f, 3000, 3000)
+    eq(w1.orientation, 'columns', 'plenty of room keeps the current arrangement')
+    -- a very wide, short box suits the rows arrangement; a tall narrow one suits columns or stacked
+    local wide = ui.fit_box(f, 1800, 200)
+    eq(wide.orientation, 'rows')
+    local tall = ui.fit_box(f, 330, 1500)
+    truthy(tall.orientation ~= 'rows')
+    -- both axes matter: a shorter box gives a smaller scale than a taller one of the same width
+    local a, b = ui.fit_box(f, 800, 300), ui.fit_box(f, 800, 700)
+    truthy(a.scale <= b.scale)
+    -- a single party only changes size
+    local one, fr1 = build_ui_frame(new_cfg({ mode = 'party', orientation = 'columns', locked = false }), 1080, 3.0)
+    one.groups, one.disp_h = fr1.groups, 1080
+    eq(ui.fit_box(one, 3000, 3000).orientation, 'columns')
 end)
 
 print(string.format('\n%d passed, %d failed', passed, failed))

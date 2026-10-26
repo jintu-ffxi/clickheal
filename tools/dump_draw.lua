@@ -121,5 +121,7 @@ scenario('hairline_party',         { mode = 'party', skin = 'hairline', colors =
 scenario('hairline_mp_pct',        { mode = 'party', skin = 'hairline', show_mp_pct = true }, 1920, 1080, 3.0)
 scenario('hairline_alliance',      { mode = 'alliance1', skin = 'hairline' }, 1920, 1080, 3.0)
 scenario('triage_party',           { mode = 'party', triage = true }, 1920, 1080, 3.0)
+scenario('triage_alliance_icons',    { mode = 'alliance2', triage = true, triage_opts = { list_icons = true, list_h = 38 } }, 1920, 1080, 3.0)
 scenario('triage_alliance',        { mode = 'alliance1', triage = true, skin = 'hairline' }, 1920, 1080, 3.0)
+scenario('strip_rows_alliance2_unlocked', { mode = 'alliance2', orientation = 'rows', locked = false }, 1920, 1080, 3.0)
 scenario('strip_unlocked',        { mode = 'party', locked = false }, 1920, 1080, 3.0)

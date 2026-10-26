@@ -48,7 +48,7 @@ function alerts.build(roster, cfg, preset, now, dismissed)
                         if info and not a.muted[key] then
                             out[#out + 1] = {
                                 id = m.slot .. ':' .. key, kind = 'debuff', slot = m.slot, name = m.name,
-                                text = info.label, spell = info.spell, sev = info.sev,
+                                text = info.label, spell = info.spell or info.suggest, sev = info.sev,
                                 in_range = in_range, hpp = m.hpp,
                             }
                         end

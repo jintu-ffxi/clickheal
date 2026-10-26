@@ -12,7 +12,7 @@ local chconfig = {}
 chconfig.defaults = {
     visible          = true,
     locked           = true,        -- locked = clickable and fixed in place; unlocked = drag to move, clicks off
-    demo             = true,        -- true = fake roster; false = your real party (read-only)
+    demo             = false,       -- true = fake roster; false = your real party (read-only)
     queue_clicks     = true,        -- a click while casting is held and sent when you can act again
     fast_cast        = 0,           -- percent; shortens the estimated cast time (only used when the game's cast bar cannot be read)
     cast_lockout     = 1.0,         -- seconds after a cast or ability before the next one can start
@@ -36,7 +36,7 @@ chconfig.defaults = {
     buff_icon        = 14,          -- buff icon size (base px)
     mouse_fix        = false,       -- stretch the mouse to a resized game window (party frames only)
     ui_zoom          = 100,         -- setup window zoom, percent
-    font_mult        = 1.0,         -- text size multiplier (ImGui's default font differs between setups)
+    font_mult        = 1.1,         -- text size multiplier (ImGui's default font differs between setups)
     opacity          = 0.92,        -- member row background
     opacity_panel    = 0.74,        -- panel background and header strip
     opacity_hp       = 0.96,        -- HP fill / rail
@@ -54,9 +54,22 @@ chconfig.defaults = {
         debuffs   = true,           -- debuffs you can remove raise a member's priority
         crit      = true,           -- HP at or below the critical threshold raises priority
         tiles     = 4,              -- number of spell tiles (3-5)
+        list_icons = false,         -- the list of other members shows buff/debuff icons under each name
+        list_h    = 18,             -- height of each row in that list (base px)
         spells    = {},             -- ordered spell keys to offer first for the featured member (empty = automatic)
         levels    = {},             -- debuff key -> 'urgent' | 'important' | 'off' (default by severity)
     },
+    debug            = {            -- developer / testing switches (Debug page)
+        force_debuffs = false,      -- give every member sample debuffs
+        force_buffs   = false,      -- give every member sample buffs
+        cursor        = false,      -- crosshair at the mouse position ImGui sees
+        input         = false,      -- log where each click lands
+    },
+    group_colors     = {            -- background color of the party, alliance 1 and alliance 2 (r, g, b)
+        { 0.40, 0.60, 1.00 }, { 0.35, 0.82, 0.66 }, { 0.92, 0.68, 0.30 },
+    },
+    group_alpha      = 0.12,        -- how strong those backgrounds are
+    group_frames     = true,        -- a border and tint around each party (party, alliance 1, alliance 2)
     show_header      = true,        -- the CLICKHEAL / MOVE / CFG bar above the rows (shown anyway while unlocked)
     skin             = 'solid',     -- row style: solid (filled HP row) or hairline (type and a thin rail)
     triage           = false,       -- one panel for whoever needs healing most, plus a compact list
@@ -178,6 +191,8 @@ function chconfig.sanitize(s)
         o.debuffs = (o.debuffs == nil) and d.debuffs or (o.debuffs and true or false)
         o.crit = (o.crit == nil) and d.crit or (o.crit and true or false)
         o.tiles = math.floor(clamp(o.tiles, 3, 5, d.tiles) + 0.5)
+        o.list_icons = (o.list_icons == nil) and d.list_icons or (o.list_icons and true or false)
+        o.list_h = math.floor(clamp(o.list_h, 14, 48, d.list_h) + 0.5)
         local list, seen = {}, {}
         for _, k in ipairs(type(o.spells) == 'table' and o.spells or {}) do
             if type(k) == 'string' and spells.defs[k] and not seen[k] then list[#list + 1] = k; seen[k] = true end
@@ -189,6 +204,23 @@ function chconfig.sanitize(s)
         end
         o.levels = lv
         s.triage_opts = o
+    end
+    do
+        local d = chconfig.defaults.debug
+        local o = type(s.debug) == 'table' and s.debug or {}
+        for k, v in pairs(d) do o[k] = (o[k] == nil) and v or (o[k] and true or false) end
+        s.debug = o
+    end
+    do
+        local d = chconfig.defaults.group_colors
+        local o = type(s.group_colors) == 'table' and s.group_colors or {}
+        local out = {}
+        for i = 1, 3 do
+            local c = type(o[i]) == 'table' and o[i] or {}
+            out[i] = { clamp(c[1], 0, 1, d[i][1]), clamp(c[2], 0, 1, d[i][2]), clamp(c[3], 0, 1, d[i][3]) }
+        end
+        s.group_colors = out
+        s.group_alpha = clamp(s.group_alpha, 0.03, 0.5, chconfig.defaults.group_alpha)
     end
     local groups = { heal = true, cleanse = true, buff = true, raise = true, song = true, ability = true }
     for group, list in pairs(s.spell_order) do
@@ -206,7 +238,7 @@ function chconfig.sanitize(s)
     for slot, v in pairs(s.bindings) do
         if not bindings.is_slot(slot) or not bindings.valid_value(v) then s.bindings[slot] = nil end
     end
-    for _, k in ipairs({ 'flyout', 'spellbar', 'cell_binds', 'show_buff_bar', 'buffs_mine_only', 'buff_mode', 'cast', 'queue_clicks', 'show_mp_pct', 'mouse_fix', 'triage', 'demo_fill', 'flyout_icons', 'show_header' }) do
+    for _, k in ipairs({ 'flyout', 'spellbar', 'cell_binds', 'show_buff_bar', 'buffs_mine_only', 'buff_mode', 'cast', 'queue_clicks', 'show_mp_pct', 'mouse_fix', 'triage', 'demo_fill', 'flyout_icons', 'show_header', 'group_frames' }) do
         s[k] = s[k] and true or false
     end
     return s

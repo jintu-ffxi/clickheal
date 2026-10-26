@@ -20,7 +20,7 @@ layout.TRI = { pad = 6, gap = 6, head_h = 24, bar_h = 14, tile_h = 34, list_h = 
 
 layout.BAR = { btn = 26, gap = 3, tab_h = 15, pad = 4, tiles = 9 }   -- optional shared spell bar under the rows
 layout.HEADER_H   = 16   -- slim title strip
-layout.LABEL_H    = 13   -- per-group label (only when more than one group is shown)
+layout.LABEL_H    = 18   -- per-group label (only when more than one group is shown)
 layout.CARD_GAP   = 4
 layout.GROUP_GAP  = 8
 layout.MIN_BTN    = 24   -- smallest allowed spell button (base px); keeps click targets usable
@@ -147,7 +147,11 @@ function layout.compute(opts, display_h)
         local head_h, bar_h, tile_h = round(T.head_h * s), round(T.bar_h * s), round(T.tile_h * s)
         local main_h = pad + head_h + gap + bar_h + gap + icon_h + gap + tile_h + pad
         local n = math.max(0, opts.triage_n or 0)
-        local row, lg = round(T.list_h * s), math.max(1, round(T.list_gap * s))
+        local row_base = opts.tri_list_h or T.list_h
+        if opts.tri_list_icons then   -- icons under the name need a name line plus the icons
+            row_base = math.max(row_base, 24 * (opts.font_mult or 1) + 5 + math.max(opts.debuff_icon or 14, opts.buff_icon or 14))
+        end
+        local row, lg = round(row_base * s), math.max(1, round(T.list_gap * s))
         local list_h = (n > 0) and (n * row + (n - 1) * lg) or 0
         g.tri = {
             main = { x = 0, y = g.header_h, w = g.card_w, h = main_h, pad = pad, gap = gap,

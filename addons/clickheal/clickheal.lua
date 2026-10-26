@@ -43,6 +43,7 @@ local spells   = require('ch.spells')
 -- Ashita's settings library needs its own table type (T{}) for the defaults; the offline test stubs have no T.
 local cfg = settings.load(T and T(chconfig.defaults) or chconfig.defaults)
 chconfig.sanitize(cfg)
+cfg.debug.force_debuffs, cfg.debug.force_buffs = false, false   -- sample statuses last for one session only
 
 local state = {
     dismissed  = {},     -- alert id -> time it may reappear
@@ -129,7 +130,7 @@ end)
 
 -- /ch inputdebug: one chat line per mouse click saying which window saw it.
 local function debug_click(name, inp, rect)
-    if not state.input_debug or not inp.clicked then return end
+    if not (state.input_debug or (cfg.debug and cfg.debug.input)) or not inp.clicked then return end
     local c = inp.clicked
     if not (c.left or c.right or c.middle) then return end
     log(string.format('[input] %s window click: %s mouse=(%d,%d) window=(%d,%d %dx%d) hovered=%s',
@@ -197,7 +198,7 @@ local function draw_cursor()
 end
 
 local function draw()
-    if state.cursor then pcall(draw_cursor) end
+    if state.cursor or (cfg.debug and cfg.debug.cursor) then pcall(draw_cursor) end
     if state.api_check then
         state.api_check = nil
         apicheck.run(imgui, log)

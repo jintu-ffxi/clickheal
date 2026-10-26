@@ -25,6 +25,7 @@
 ]]--
 
 local theme      = require('ch.theme')
+local chconfig   = require('ch.chconfig')
 local jobs       = require('ch.jobs')
 local debuffs    = require('ch.debuffs')
 local spells     = require('ch.spells')
@@ -339,7 +340,7 @@ local function draw_debuff_strip(f, m, x, y, w, h, dim)
         local reserve = (i < #list) and (more_w + gap) or 0
         if cx + need + reserve > x + w then
             local extra = '+' .. (#list - i + 1)
-            local ew = g.text_size(extra) + pad
+            local ew = g.text_size(extra) + floor(7 * s)
             if cx + ew <= x + w then chip(f, cx, y, h, extra, pal.text, pal.btn_hot, dim) end
             break
         end
@@ -354,6 +355,7 @@ local function draw_debuff_strip(f, m, x, y, w, h, dim)
             cx = cx + iw + gap
         else
             -- Dark backing with a colored edge and text: readable on any HP fill color.
+            if cx + tw > x + w then break end   -- the text tag is wider than the icon it replaced
             local col = (info.sev <= 2) and sev_color(pal, info.sev) or pal.text
             local w = tw
             g.rect_filled(cx, y, w, h, theme.pack(0.04, 0.05, 0.07, 0.88 * dim), floor(3 * s))
@@ -396,13 +398,14 @@ local function draw_buff_strip(f, m, list, x, y, w, h, dim)
         local reserve = (i < #list) and (more_w + gap) or 0
         if cx + need + reserve > x + w then
             local extra = '+' .. (#list - i + 1)
-            if cx + g.text_size(extra) + pad <= x + w then chip(f, cx, y, h, extra, pal.text, pal.btn_hot, dim) end
+            if cx + g.text_size(extra) + floor(7 * s) <= x + w then chip(f, cx, y, h, extra, pal.text, pal.btn_hot, dim) end
             break
         end
         local urg = buffs.urgency(b.rem)
         local iw = need
         local icon_ok = g.status_icon and sid and g.status_icon(cx, y, h, sid) or false
         if not icon_ok then
+            if cx + tw > x + w then break end
             iw = tw
             g.rect_filled(cx, y, tw, h, theme.pack(0.04, 0.05, 0.07, 0.88 * dim), floor(3 * s))
             local lw, lh = g.text_size(label)
@@ -506,7 +509,7 @@ local function eff(f)
     if e then return e end
     local c = f.cfg
     return { debuff_icon = c.debuff_icon, buff_icon = c.buff_icon, mp_h = c.show_mp and c.mp_height or 0,
-        mp_pct = (c.show_mp and c.show_mp_pct) and c.mp_pct_scale or nil, hl_pct = c.hl_pct }
+        mp_pct = c.show_mp_pct and c.mp_pct_scale or nil, hl_pct = c.hl_pct }
 end
 
 --- Height of the debuff/buff icon band (px).
@@ -517,11 +520,12 @@ end
 
 --- Debuff icons on the left and buff icons beside them (each takes the whole width when the other has
 -- nothing to show), inside x = xl..xr, with the band's top edge at iy.
-local function draw_icon_strip(f, m, xl, xr, iy, dim)
+local function draw_icon_strip(f, m, xl, xr, iy, dim, cap)
     if m.dead or m.zone_diff then return end
     local s = f.geom.scale
     local e = eff(f)
     local di, bi = floor(e.debuff_icon * s), floor(e.buff_icon * s)
+    if cap then di, bi = min(di, cap), min(bi, cap) end   -- `cap`: the most height there is (px)
     local sh = max(di, bi)
     local sw = xr - xl
     if sh <= 0 or sw < sh then return end
@@ -635,7 +639,7 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
     g.text(right, y1, A(m.dead and hp_text_color(f, m) or pal.text, dim), hpt)
     right = right - floor(6 * s)
     local icons_xr = xr
-    if eff(f).mp_pct and f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead then
+    if eff(f).mp_pct and m.mpmax and m.mpmax > 0 and not m.dead then
         -- MP percent sits under the HP percent, right-aligned, in a smaller size.
         local k = eff(f).mp_pct
         local mpt = string.format('%d%%', floor(100 * max(0, min(1, (m.mp or 0) / m.mpmax)) + 0.5))
@@ -998,7 +1002,7 @@ local function draw_hairline(f, m, r, out_of_range, near_limit, dim)
         g.text_scaled(px + nw + floor(1 * s), py + nh - sh2 - floor(3 * s), A(pcol, 0.85 * dim), '%', 0.55)
     end
     local left = px
-    if eff(f).mp_pct and f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead then
+    if eff(f).mp_pct and m.mpmax and m.mpmax > 0 and not m.dead then
         local k2 = eff(f).mp_pct
         local mpt = string.format('%d%%', floor(100 * max(0, min(1, (m.mp or 0) / m.mpmax)) + 0.5))
         local mw = g.text_size_scaled(mpt, k2)
@@ -1120,6 +1124,50 @@ local function draw_tile(f, x, y, w, h, def, member, best, potency, note)
     end
 end
 
+local GROUP_NAMES = { [0] = 'PARTY', [1] = 'ALLIANCE 1', [2] = 'ALLIANCE 2' }
+--- The user's background color for a party (0 = main party, 1 and 2 = alliance parties).
+local function group_tint(f, gi)
+    local c = f.cfg.group_colors and f.cfg.group_colors[(gi or 0) + 1] or chconfig.defaults.group_colors[(gi or 0) + 1]
+    c = c or chconfig.defaults.group_colors[1]
+    return theme.pack(c[1], c[2], c[3], 1.0)
+end
+
+--- The panel's size at scale 1.0 for one arrangement (width, height).
+local function natural_size(f, orient)
+    local c = f.cfg
+    local o = {
+        orientation = orient, auto_scale = c.auto_scale, scale = 1.0, groups = f.groups, spellbar = c.spellbar,
+        row_w = c.row_w, row_h = (c.skin == 'hairline') and c.hl_row_h or c.row_h,
+        debuff_icon = c.debuff_icon, buff_icon = c.buff_icon, mp_h = c.show_mp and c.mp_height or 0,
+        mp_pct = c.show_mp_pct and c.mp_pct_scale or nil, skin = c.skin, hl_pct = c.hl_pct, name_scale = c.name_scale,
+        header = c.show_header or not c.locked,
+    }
+    local g = layout.compute(o, f.disp_h or 1080)
+    return g.width, g.height
+end
+
+--- Which arrangement and size fit a box of w x h pixels best: { orientation, scale }. With a single party only the
+-- size changes. The current arrangement is kept unless another is clearly (8%) better, so it does not flicker.
+function ui.fit_box(f, w, h)
+    local cur = f.cfg.orientation or 'columns'
+    local multi = f.groups and #f.groups > 1
+    local order = multi and { 'columns', 'stacked', 'rows' } or { cur }
+    local raw = {}                          -- orientation -> the scale at which it just fits the box
+    for _, o in ipairs(order) do
+        local w1, h1 = natural_size(f, o)
+        if w1 > 0 and h1 > 0 then raw[o] = math.min(w / w1, h / h1) end
+    end
+    local cur_v = raw[cur]
+    local pick, best = cur, cur_v
+    for _, o in ipairs(order) do
+        local v = raw[o]
+        if v and (best == nil or (o ~= cur and v > (cur_v or 0) * 1.08 and v > best)) then pick, best = o, v end
+    end
+    if best == nil then return nil end
+    local v = floor(best / 0.05 + 0.5) * 0.05
+    return { orientation = pick, scale = max(0.5, min(3.0, v)) }
+end
+
 local function draw_triage(f)
     local g, pal, geom, s = f.gfx, f.pal, f.geom, f.geom.scale
     local T = geom.tri
@@ -1146,6 +1194,12 @@ local function draw_triage(f)
     end
 
     local out_of_range, near_limit, dim = member_flags(f, feat)
+    local ngroups = 0
+    for _ in pairs(gs or {}) do ngroups = ngroups + 1 end
+    local multi = ngroups > 1
+    if multi then
+        g.rect_filled(mx, my, M.w, M.h, theme.alpha(group_tint(f, math.floor(feat.slot / 6)), f.cfg.group_alpha or 0.12), floor(4 * s))
+    end
     local def_hp = triage.deficit(feat)
     local frac = max(0, min(1, (feat.hpp or 0) / 100))
     local tier = tiers[feat.slot] or 0
@@ -1219,6 +1273,7 @@ local function draw_triage(f)
 
     -- Everyone else, neediest first.
     local L = T.list
+    local list_icons = f.cfg.triage_opts and f.cfg.triage_opts.list_icons
     local ly = oy + L.y
     local lx = ox + L.x
     for _, m in ipairs(list) do
@@ -1228,12 +1283,15 @@ local function draw_triage(f)
             local mf = max(0, min(1, (m.hpp or 0) / 100))
             local mjr, mjg, mjb = jobs.hue(m.job)
             local hot = hovering(f, rr.x, rr.y, rr.w, rr.h)
+            if multi then g.rect_filled(rr.x, rr.y, rr.w, rr.h, theme.alpha(group_tint(f, floor(m.slot / 6)), (f.cfg.group_alpha or 0.12) * 1.2), floor(2 * s)) end
             if hot then g.rect_filled(rr.x, rr.y, rr.w, rr.h, theme.pack(1, 1, 1, 0.06), floor(2 * s)) end
+            local icap = rr.h - th - floor(5 * s)
+            local two = list_icons and icap >= floor(9 * s)   -- icons under the name, when the row is tall enough
             g.rect_filled(rr.x, rr.y + floor(2 * s), max(2, floor(2 * s)), rr.h - floor(4 * s), A(theme.pack(mjr, mjg, mjb, 1.0), d2), 0)
             local pt = m.dead and 'KO' or string.format('%d%%', floor(m.hpp or 0))
             local pw = g.text_size('100%')
             local pcol = m.dead and pal.bad or theme.hp_color(pal, mf)
-            local ty2 = rr.y + floor((rr.h - th) / 2)
+            local ty2 = two and (rr.y + floor(2 * s)) or (rr.y + floor((rr.h - th) / 2))
             g.text(rr.x + rr.w - g.text_size(pt) - floor(3 * s), ty2, A(pcol, d2), pt)
             local nm2 = fit(g, m.name:upper(), floor(rr.w * 0.34))
             g.text(rr.x + floor(8 * s), ty2, name_color(f, m, d2), nm2)
@@ -1241,7 +1299,7 @@ local function draw_triage(f)
             local bw2 = rr.x + rr.w - pw - floor(10 * s) - bx
             if bw2 > 6 then
                 local bh = max(2, floor(3 * s))
-                local byy = rr.y + floor((rr.h - bh) / 2)
+                local byy = two and (ty2 + floor((th - bh) / 2)) or (rr.y + floor((rr.h - bh) / 2))
                 g.rect_filled(bx, byy, bw2, bh, theme.pack(1, 1, 1, 0.14 * d2), 0)
                 if not m.dead and not m.zone_diff and mf > 0 then
                     local fc = theme.hp_fill(pal, mf, { mjr, mjg, mjb })
@@ -1249,7 +1307,10 @@ local function draw_triage(f)
                     g.rect_filled(bx, byy, max(1, floor(bw2 * mf)), bh, A(fc, f.cfg.opacity_hp * d2), 0)
                 end
             end
-            local nd = (not m.dead) and #sorted_debuffs(m) or 0
+            if two then
+                draw_icon_strip(f, m, rr.x + floor(8 * s), rr.x + rr.w - floor(3 * s), ty2 + th + floor(2 * s), d2, icap)
+            end
+            local nd = (not m.dead and not two) and #sorted_debuffs(m) or 0
             if nd > 0 then
                 local dsz = max(3, floor(5 * s))
                 local worst = debuffs.info[sorted_debuffs(m)[1]]
@@ -1282,7 +1343,6 @@ end
 -- roster panel
 -- ------------------------------------------------------------------------------------------
 
-local GROUP_NAMES = { [0] = 'PARTY', [1] = 'ALLIANCE 1', [2] = 'ALLIANCE 2' }
 
 function ui.draw_roster(f)
     local g, pal, geom, s = f.gfx, f.pal, f.geom, f.geom.scale
@@ -1357,6 +1417,9 @@ function ui.draw_roster(f)
     if not f.cfg.locked then
         candidates = { 'UNLOCKED - drag to move  (/ch lock)', 'UNLOCKED - drag to move', 'UNLOCKED' }
         tag_col = pal.warn
+    elseif f.cfg.debug and (f.cfg.debug.force_debuffs or f.cfg.debug.force_buffs) then
+        candidates = { 'SAMPLE STATUS ON (Debug page)', 'SAMPLE STATUS ON', 'SAMPLES' }
+        tag_col = pal.warn
     elseif f.cfg.demo then
         candidates = { 'DEMO DATA', 'DEMO' }
         tag_col = A(pal.text_dim, 0.7)
@@ -1373,38 +1436,24 @@ function ui.draw_roster(f)
         end
     end
 
-    -- Resize grip (only while unlocked): drag the bottom-right corner to scale the whole panel.
-    if not f.cfg.locked and g.hit_area then
-        local gs = floor(14 * s)
-        local gx, gy = ox + geom.width - gs, oy + geom.height - gs
-        g.current_input = f.input
-        local held = g.hit_area('##chgrip', gx, gy, gs, gs)
-        local col = held and pal.accent or A(pal.text_dim, 0.8)
-        for k = 1, 3 do
-            local o = floor(k * 4 * s)
-            g.rect_filled(gx + gs - o - 1, gy + gs - floor(2 * s) - 1, floor(2 * s), floor(2 * s), col, 0)
-            g.rect_filled(gx + gs - floor(2 * s) - 1, gy + gs - o - 1, floor(2 * s), floor(2 * s), col, 0)
-        end
-        if held then
-            local rs = ui.state.resize
-            if not rs then rs = { w0 = geom.width, scale0 = f.cfg.scale }; ui.state.resize = rs end
-            local ratio = (f.input.mx - ox + gs / 2) / rs.w0
-            local v = floor(rs.scale0 * ratio / 0.05 + 0.5) * 0.05
-            v = max(0.5, min(3.0, v))
-            if math.abs(v - f.cfg.scale) >= 0.049 then
-                f.events[#f.events + 1] = { type = 'set_scale', value = v }
-            end
-        else
-            ui.state.resize = nil
-        end
-    else
-        ui.state.resize = nil
-    end
 
-    -- Group labels.
+    -- Group frames: a tinted backdrop and border per party, so the main party and each alliance party read as
+    -- separate blocks. The labels take the same tint.
     if geom.label_h > 0 then
         for _, grp in ipairs(geom.groups) do
-            g.text(ox + grp.x + floor(3 * s), oy + grp.y, A(pal.text_dim, 0.8), GROUP_NAMES[grp.index] or 'GROUP')
+            local tc = group_tint(f, grp.index)
+            if f.cfg.group_frames then
+                local x0, y0 = ox + grp.x, oy + grp.y
+                g.rect_filled(x0, y0, grp.w, grp.h, theme.alpha(tc, f.cfg.group_alpha or 0.12), floor(4 * s))
+                outline(g, x0, y0, grp.w, grp.h, max(1, floor(1 * s)), theme.alpha(tc, 0.55))
+                g.rect_filled(x0, y0 + grp.label_h - max(1, floor(1 * s)), grp.w, max(1, floor(1 * s)), theme.alpha(tc, 0.35), 0)
+            end
+            -- The label shrinks to fit its band (bigger fonts would otherwise run into the divider below it).
+            local lname = GROUP_NAMES[grp.index] or 'GROUP'
+            local lh = select(2, g.text_size(lname))
+            local lk = (lh > 0) and min(1, (grp.label_h - floor(3 * s)) / lh) or 1
+            g.text_scaled(ox + grp.x + floor(4 * s), oy + grp.y + floor((grp.label_h - lh * lk) / 2) - floor(1 * s),
+                f.cfg.group_frames and theme.alpha(tc, 0.95) or A(pal.text_dim, 0.8), lname, lk)
         end
     end
 
@@ -1422,6 +1471,42 @@ function ui.draw_roster(f)
                 draw_empty(f, r)
             end
         end
+    end
+
+    -- Resize grips (only while unlocked): one at the bottom-right of every party, so one is always in reach
+    -- (Rows view is very wide). Dragging any of them scales the whole panel.
+    if not f.cfg.locked and g.hit_area and not f.cfg.triage then
+        local gs = floor(14 * s)
+        local any_held = false
+        g.current_input = f.input
+        for _, grp in ipairs(geom.groups) do
+            local gx, gy = ox + grp.x + grp.w - gs, oy + grp.y + grp.h - gs
+            local held = g.hit_area('##chgrip' .. grp.index, gx, gy, gs, gs)
+            local col = held and pal.accent or A(pal.text_dim, 0.8)
+            for k = 1, 3 do
+                local o = floor(k * 4 * s)
+                g.rect_filled(gx + gs - o - 1, gy + gs - floor(2 * s) - 1, floor(2 * s), floor(2 * s), col, 0)
+                g.rect_filled(gx + gs - floor(2 * s) - 1, gy + gs - o - 1, floor(2 * s), floor(2 * s), col, 0)
+            end
+            if held then
+                any_held = true
+                local rs = ui.state.resize
+                if not rs then
+                    rs = { mx0 = f.input.mx, my0 = f.input.my, w0 = geom.width, h0 = geom.height }
+                    ui.state.resize = rs
+                end
+                -- Fit the panel into the box you are dragging out (width AND height): the arrangement whose
+                -- parties fit that box at the largest size wins, so the parties re-flow as the shape changes.
+                local tw, th_ = rs.w0 + (f.input.mx - rs.mx0), rs.h0 + (f.input.my - rs.my0)
+                local pick = ui.fit_box(f, tw, th_)
+                if pick and (math.abs(pick.scale - f.cfg.scale) >= 0.049 or pick.orientation ~= (f.cfg.orientation or 'columns')) then
+                    f.events[#f.events + 1] = { type = 'set_layout', scale = pick.scale, orientation = pick.orientation }
+                end
+            end
+        end
+        if not any_held then ui.state.resize = nil end
+    else
+        ui.state.resize = nil
     end
 
     draw_spellbar(f)

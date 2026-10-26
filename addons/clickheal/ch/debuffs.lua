@@ -14,7 +14,7 @@ local debuffs = {}
 debuffs.info = {
     doom       = { label = 'DOOM',     short = 'DOM', sev = 1, spell = 'cursna'   },
     petrify    = { label = 'PETRIFY',  short = 'PTR', sev = 1, spell = 'stona'    },
-    sleep      = { label = 'SLEEP',    short = 'SLP', sev = 1, spell = nil        },
+    sleep      = { label = 'SLEEP',    short = 'SLP', sev = 1, spell = nil, suggest = 'cure1' },   -- nothing removes it; the alert bar suggests a quick low cure (damage wakes them)
     terror     = { label = 'TERROR',   short = 'TRR', sev = 1, spell = nil        },
     silence    = { label = 'SILENCE',  short = 'SIL', sev = 2, spell = 'silena'   },
     paralysis  = { label = 'PARALYZE', short = 'PAR', sev = 2, spell = 'paralyna' },
