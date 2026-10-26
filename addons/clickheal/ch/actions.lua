@@ -95,7 +95,6 @@ function actions.perform(ev, ctx)
     if ev.state == 'busy' then
         if ctx.cfg and ctx.cfg.queue_clicks then
             casting.queue(ev, ctx.now)
-            ctx.log(string.format('[ClickHeal] queued %s -> %s (sends when you can cast)', def.name, def.selfonly and 'you' or who))
             return 'queued'
         end
         ctx.log(string.format("[ClickHeal] Can't cast %s yet: %s", def.name, spellstate.describe(ev.state, ev.detail)))
@@ -119,7 +118,6 @@ function actions.perform(ev, ctx)
         local cmd = actions.command_for(def, token)
         ctx.send(cmd)
         casting.start(def, ctx.now, ctx.cfg)
-        ctx.log(string.format('%s -> %s (%s)', def.name, who, token))
         return 'sent'
     end
 
