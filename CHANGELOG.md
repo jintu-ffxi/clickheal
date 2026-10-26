@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Casts are no longer echoed to the chat log (the game already shows them).
+- Chat messages no longer carry a duplicate `[ClickHeal]` tag, and blocked-click messages no longer say "demo" on a real party.
+
 ## 1.0.0
 
 First release.
