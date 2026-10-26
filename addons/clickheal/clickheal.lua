@@ -28,7 +28,6 @@ local demo     = require('ch.source_demo')
 local mixed    = require('ch.source_mixed')
 local gfx      = require('ch.gfx_imgui')
 local fonts    = require('ch.fonts')
-local mousefix = require('ch.mousefix')
 local configui = require('ch.configui')
 local casting  = require('ch.casting')
 local chatstatus = require('ch.chatstatus')
@@ -119,8 +118,6 @@ ashita.events.register('command', 'clickheal_command', function(e)
         local preset = spells.preset_for(pl.job or 0, pl.sub or 0)
         log(res.show_order .. ': ' .. table.concat(spells.group_keys(cfg, preset, res.show_order), ' '))
     end
-    if res.cursor ~= nil then state.cursor = res.cursor end
-    if res.party_dump then game_source.dump_status(log) end
     if res.api_check then state.api_check = true end   -- runs in the next draw frame; ImGui is not valid here
     if res.changed then
         chconfig.sanitize(cfg)
@@ -132,77 +129,7 @@ end)
 -- drawing
 -- ---------------------------------------------------------------------------------------------
 
--- Debug page 'Log clicks': one chat line per mouse click saying which window saw it.
-local function debug_click(name, inp, rect)
-    if not (cfg.debug and cfg.debug.input) or not inp.clicked then return end
-    local c = inp.clicked
-    if not (c.left or c.right or c.middle) then return end
-    log(string.format('[input] %s window click: %s mouse=(%d,%d) window=(%d,%d %dx%d) hovered=%s',
-        name, c.left and 'left' or (c.right and 'right' or 'middle'), inp.mx, inp.my,
-        rect.x, rect.y, rect.w, rect.h, tostring(inp.hovered)))
-end
-
---- /ch cursor: a crosshair at the mouse position ImGui reports, plus the numbers behind it. If the crosshair
--- sits away from the real pointer, the offset comes from the client or Windows scaling, not from ClickHeal.
--- Windows' own idea of the pointer and of the game window, to compare with ImGui's (needs ffi + user32).
-local os_cursor
-do
-    local okf, ffi = pcall(require, 'ffi')
-    if okf then
-        pcall(ffi.cdef, [[
-            typedef struct { long x, y; } CH_POINT;
-            typedef struct { long l, t, r, b; } CH_RECT;
-            int GetCursorPos(CH_POINT* p);
-            int ScreenToClient(void* hwnd, CH_POINT* p);
-            int GetClientRect(void* hwnd, CH_RECT* r);
-            int GetSystemMetrics(int i);
-            void* GetForegroundWindow(void);
-            unsigned int GetDpiForWindow(void* hwnd);
-        ]])
-        os_cursor = function()
-            local u = ffi.C
-            local hwnd = u.GetForegroundWindow()
-            local p, r = ffi.new('CH_POINT[1]'), ffi.new('CH_RECT[1]')
-            u.GetCursorPos(p); u.GetClientRect(hwnd, r)
-            local rx, ry = tonumber(p[0].x), tonumber(p[0].y)
-            u.ScreenToClient(hwnd, p)
-            return rx, ry, tonumber(u.GetSystemMetrics(0)), tonumber(u.GetSystemMetrics(1)),
-                tonumber(p[0].x), tonumber(p[0].y), tonumber(r[0].r), tonumber(r[0].b)
-        end
-    end
-end
-
-local function draw_cursor()
-    local dl = imgui.GetForegroundDrawList()
-    local mx, my = imgui.GetMousePos()
-    if type(mx) ~= 'number' then mx, my = mx.x or mx[1], mx.y or mx[2] end
-    local dw, dh = gfx.display_size()
-    local col = imgui.GetColorU32({ 1, 0.1, 0.9, 1 })
-    dl:AddLine({ mx - 14, my }, { mx + 14, my }, col, 1)
-    dl:AddLine({ mx, my - 14 }, { mx, my + 14 }, col, 1)
-    local fx, fy = mousefix.factors(dw, dh)
-    local cw, chh = mousefix.client_size()
-    local gcol = imgui.GetColorU32({ 0.2, 1, 0.3, 1 })
-    local cx, cy = mx * fx, my * fy
-    dl:AddLine({ cx - 14, cy }, { cx + 14, cy }, gcol, 1)
-    dl:AddLine({ cx, cy - 14 }, { cx, cy + 14 }, gcol, 1)
-    local lines = {
-        string.format('imgui mouse %d,%d   display %dx%d   (magenta cross)', mx, my, dw, dh),
-        string.format('game window client %s   stretch %.3f x %.3f   (green cross = corrected)', cw and (cw .. 'x' .. chh) or 'unknown', fx, fy),
-    }
-    if os_cursor then
-        local ok, rx, ry, sw, sh, cx, cy, cw, ch = pcall(os_cursor)
-        if ok then
-            lines[#lines + 1] = string.format('windows cursor %d,%d   screen %dx%d', rx, ry, sw, sh)
-            lines[#lines + 1] = string.format('diff imgui-windows %d,%d   screen/display %.3f x %.3f', mx - rx, my - ry, sw / dw, sh / dh)
-            lines[#lines + 1] = string.format('(foreground window client %d,%d of %dx%d)', cx, cy, cw, ch)
-        end
-    end
-    for i, l in ipairs(lines) do dl:AddText({ mx + 16, my + 4 + i * 16 }, col, l) end
-end
-
 local function draw()
-    if state.cursor or (cfg.debug and cfg.debug.cursor) then pcall(draw_cursor) end
     if state.api_check then
         state.api_check = nil
         apicheck.run(imgui, log)
@@ -214,7 +141,6 @@ local function draw()
     casting.observe(t, source.castbar and source.castbar() or nil)   -- the game's own cast bar, when it can be read
     local fr = frame.build(cfg, source, t, disp_w, disp_h, state.dismissed)
     gfx.set_font_scale(fr.geom.scale * cfg.font_mult)
-    gfx.set_mouse_fix(cfg.mouse_fix)
 
     local events = {}
     local base = {
@@ -232,7 +158,6 @@ local function draw()
             f.ox, f.oy = px, py
             f.input = gfx.input()
             f.input.interactive = cfg.locked
-            debug_click('roster', f.input, { x = px, y = py, w = fr.geom.width, h = fr.geom.height })
             local ok, err = pcall(ui.draw_roster, f)
             if not ok then report_error('roster', err) end
             if not cfg.locked and (px ~= cfg.pos.x or py ~= cfg.pos.y) then
@@ -280,7 +205,6 @@ local function draw()
                 f.ox, f.oy, f.plan = fx, fy, plan
                 f.input = gfx.input()
                 f.input.interactive = true
-                debug_click('FLYOUT', f.input, { x = fx, y = fy, w = plan.w, h = plan.h })
                 local ok, err = pcall(ui.draw_flyout, f)
                 if not ok then report_error('flyout', err) end
             end

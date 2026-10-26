@@ -290,7 +290,7 @@ package.preload['imgui'] = function()
                 { border = color('Border', { 0.2, 0.2, 0.27, 1 }) })
             S.children[#S.children + 1] = { bg = bg, y = y }
             S.regions[#S.regions + 1] = { x0 = x + wx, w = cw - 2 * wx, next_y = y + wy, bottom = y + wy, line_y = y + wy,
-                line_h = 0, last_x = x + wx, child = bg }
+                line_h = 0, last_x = x + wx, child = bg, id = id }
             return true
         end,
         EndChild = function()
@@ -298,6 +298,7 @@ package.preload['imgui'] = function()
             local wx, wy = pad_xy('WindowPadding', 8, 8)
             local parent = region()
             r.child.h = r.bottom + wy - r.child.y
+            if r.id == '##nav' then S.nav_bottom = r.child.y + r.child.h end
             parent.bottom = max(parent.bottom, r.child.y + r.child.h)
             parent.line_h = max(parent.line_h, r.child.h)
             parent.next_y = parent.line_y + parent.line_h + select(2, pad_xy('ItemSpacing', 8, 4))
@@ -365,6 +366,10 @@ local function render_page(index, sc, zoom, over, win_w)
         last = S
     end
     local H = S.win.h
+    -- the sidebar lists every page, so it has to fit the window (the content area scrolls, the sidebar should not)
+    if S.nav_bottom and S.nav_bottom > S.win.h - 14 * sc then
+        S.flags[#S.flags + 1] = { x = 10, y = S.nav_bottom - 30, w = 150, h = 30, what = 'sidebar taller than the window' }
+    end
     for _, c in ipairs(S.children) do H = max(H, c.bg.y + c.bg.h + 14 * sc) end
     -- every child fills the window's remaining height, as in ImGui
     for _, c in ipairs(S.children) do c.bg.h = H - 14 * sc - c.y end

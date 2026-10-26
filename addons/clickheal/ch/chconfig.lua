@@ -30,7 +30,6 @@ chconfig.defaults = {
     row_h            = 42,          -- member row height, i.e. the HP bar (base px)
     debuff_icon      = 14,          -- debuff icon size (base px)
     buff_icon        = 14,          -- buff icon size (base px)
-    mouse_fix        = false,       -- stretch the mouse to a resized game window (party frames only)
     ui_zoom          = 100,         -- setup window zoom, percent
     font_mult        = 1.1,         -- text size multiplier (ImGui's default font differs between setups)
     opacity          = 0.92,        -- member row background
@@ -55,11 +54,9 @@ chconfig.defaults = {
         spells    = {},             -- ordered spell keys to offer first for the featured member (empty = automatic)
         levels    = {},             -- debuff key -> 'urgent' | 'important' | 'off' (default by severity)
     },
-    debug            = {            -- developer / testing switches (Debug page)
+    debug            = {            -- sample statuses for demo mode (Demo page)
         force_debuffs = false,      -- give every member sample debuffs
         force_buffs   = false,      -- give every member sample buffs
-        cursor        = false,      -- crosshair at the mouse position ImGui sees
-        input         = false,      -- log where each click lands
     },
     group_colors     = {            -- background color of the party, alliance 1 and alliance 2 (r, g, b)
         { 0.40, 0.60, 1.00 }, { 0.35, 0.82, 0.66 }, { 0.92, 0.68, 0.30 },
@@ -141,7 +138,7 @@ function chconfig.sanitize(s)
     s.scale      = clamp(s.scale, 0.5, 4.0, d.scale)
     s.ui_zoom    = math.floor(clamp(s.ui_zoom, 60, 300, d.ui_zoom) + 0.5)
     s.font_mult  = clamp(s.font_mult, 0.6, 2.0, d.font_mult)
-    s.slant = nil; s.job_icon = nil; s.cast = nil   -- options that no longer exist
+    s.slant = nil; s.job_icon = nil; s.cast = nil; s.mouse_fix = nil   -- options that no longer exist
     s.spellbar = nil; s.bar_tab = nil; s.cell_binds = nil; s.buff_mode = nil; s.bindings = nil
     s.hide_empty_groups = nil; s.show_empty_slots = nil
     s.fly_btn    = math.floor(clamp(s.fly_btn, 24, 64, d.fly_btn) + 0.5)
@@ -200,6 +197,7 @@ function chconfig.sanitize(s)
         local d = chconfig.defaults.debug
         local o = type(s.debug) == 'table' and s.debug or {}
         for k, v in pairs(d) do o[k] = (o[k] == nil) and v or (o[k] and true or false) end
+        o.cursor, o.input = nil, nil   -- retired test switches
         s.debug = o
     end
     do
@@ -225,7 +223,7 @@ function chconfig.sanitize(s)
             s.spell_order[group] = (#clean > 0) and clean or nil
         end
     end
-    for _, k in ipairs({ 'flyout', 'show_buff_bar', 'buffs_mine_only', 'queue_clicks', 'show_mp_pct', 'mouse_fix', 'triage', 'demo_fill', 'flyout_icons', 'show_header', 'group_frames' }) do
+    for _, k in ipairs({ 'flyout', 'show_buff_bar', 'buffs_mine_only', 'queue_clicks', 'show_mp_pct', 'triage', 'demo_fill', 'flyout_icons', 'show_header', 'group_frames' }) do
         s[k] = s[k] and true or false
     end
     return s

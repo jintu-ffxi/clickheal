@@ -13,7 +13,6 @@ local imgui = require('imgui')
 local theme = require('ch.theme')
 local icons = require('ch.icons')
 local fonts = require('ch.fonts')
-local mousefix = require('ch.mousefix')
 
 local M = {}
 
@@ -52,7 +51,6 @@ local function px(v) return floor(v + 0.5) end
 -- ---------------------------------------------------------------------------------------------
 
 local font_scale   = 1.0
-local mouse_fix    = false   -- stretch the mouse position to match a resized game window
 local font_pushed  = false   -- our vector font is on the stack for the current window
 local color_cache  = {}
 local size_cache   = {}
@@ -72,7 +70,6 @@ local function u32(c)
     return v
 end
 
-function M.set_mouse_fix(on) mouse_fix = on and true or false end
 
 function M.set_font_scale(s)
     if s ~= font_scale then
@@ -109,11 +106,6 @@ function M.input()
     local mx, my = 0, 0
     local okm, a, b = pcall(imgui.GetMousePos)
     if okm then mx, my = xy(a, b) end
-    if mouse_fix then
-        local dw, dh = M.display_size()
-        local fx, fy = mousefix.factors(dw, dh)
-        mx, my = mx * fx, my * fy
-    end
 
     local function clicked(btn)
         local ok, v = pcall(imgui.IsMouseClicked, btn)

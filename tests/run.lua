@@ -1810,7 +1810,7 @@ test('group frames: each party gets a frame; every party has a resize grip while
 end)
 
 
-test('debug page: sample status effects work on any roster, and the triage list grows to fit its icons', function()
+test('demo page: sample status effects work on any roster, and the triage list grows to fit its icons', function()
     local frame = require('ch.frame')
     local function roster(over)
         local cfg = new_cfg(over)
@@ -1826,7 +1826,7 @@ test('debug page: sample status effects work on any roster, and the triage list 
     truthy(with_debuffs(forced) > with_debuffs(plain), 'the switch adds debuffs')
     eq(with_debuffs(forced), living, 'every living member has debuffs')
     for _, m in ipairs(forced) do if m.active and not m.dead then truthy(#m.buffs > 0 and m.has_buff_data) end end
-    eq(chconfig.sanitize({ debug = { cursor = 1 } }).debug.cursor, true)
+    eq(chconfig.sanitize({ debug = { cursor = 1 } }).debug.cursor, nil, 'retired switches are dropped')
     -- triage list: turning icons on makes the rows tall enough for them
     local short = layout.compute({ triage = true, triage_n = 4, tri_list_h = 18, debuff_icon = 14, buff_icon = 14 }, 1080)
     local tall = layout.compute({ triage = true, triage_n = 4, tri_list_h = 18, tri_list_icons = true, debuff_icon = 14, buff_icon = 14 }, 1080)
@@ -1975,6 +1975,22 @@ test('triage: the featured member shows their health percent, not a deficit or A
         end
     end
     truthy(pct, 'a percent is shown'); truthy(not bad, 'no deficit text')
+end)
+
+test('commands: every listed command works, and nothing experimental is left', function()
+    local seen = {}
+    for _, c in ipairs(commands.LIST) do
+        for word in c[1]:gmatch('/ch%s+(%a+)') do seen[word] = true end
+        truthy(#c[2] > 10, 'each command has a description')
+    end
+    for word in pairs(seen) do
+        local r = commands.run({ '/ch', word, 'party' }, new_cfg({}))
+        truthy(not (r.messages[1] or ''):find('Unknown'), '/ch ' .. word .. ' is listed but unknown')
+    end
+    for _, gone in ipairs({ 'cursor', 'partydump', 'cast', 'inputdebug' }) do
+        truthy(commands.run({ '/ch', gone }, new_cfg({})).messages[1]:find('Unknown'), '/ch ' .. gone .. ' should be gone')
+    end
+    eq(#commands.run({ '/ch', 'help' }, new_cfg({})).messages, #commands.LIST, 'help prints the whole list')
 end)
 
 print(string.format('\n%d passed, %d failed', passed, failed))

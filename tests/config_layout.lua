@@ -241,6 +241,15 @@ test('setup panel: no label or option text is cut short with ".."', function()
     if #bad > 0 then error('clipped: ' .. table.concat(bad, ' | ', 1, math.min(5, #bad))) end
 end)
 
+test('setup panel: the Commands page lists every slash command', function()
+    seen_texts = {}
+    for i = 1, #configui.PAGES do run_page(i, 1.0, 7, nil, { demo = false }) end
+    local joined = table.concat(seen_texts, '\n')
+    for _, c in ipairs(require('ch.commands').LIST) do
+        if not joined:find(c[1], 1, true) then error('missing from the panel: ' .. c[1]) end
+    end
+end)
+
 test('setup panel: every user-facing setting has a control somewhere', function()
     seen_ids = {}
     local variants = {

@@ -10,19 +10,19 @@ local chconfig = require('ch.chconfig')
 
 local commands = {}
 
-local HELP = {
-    '/ch                      open / close the setup panel',
-    '/ch show | hide          show or hide the frames',
-    '/ch lock | unlock        lock = clickable, unlock = drag to move',
-    '/ch scale <0.5-4|auto>   size multiplier (auto = follow game resolution)',
-    '/ch mode <party|alliance1|alliance2>   (or 6 / 12 / 18)',
-    '/ch orient <columns|stacked|rows>',
-    '/ch demo [on|off]        demo data (off = your real party)',
-    '/ch status               show the switches that decide what hover and clicks do',
-    '/ch reset confirm        restore every setting to defaults',
-    '/ch apicheck             check which Ashita/ImGui calls this install supports',
-    '/ch partydump            print the raw party status-icon data (for debuff icon support)',
-    '/ch cursor [on|off]     draw a crosshair at the mouse position ImGui sees (for debugging offset clicks)',
+--- Every command, in the order /ch help and the setup panel list them: { what you type, what it does }.
+commands.LIST = {
+    { '/ch',                       'Open or close the setup panel.' },
+    { '/ch show   |   /ch hide',   'Show or hide the party frames.' },
+    { '/ch lock   |   /ch unlock', 'Locked: clicks cast. Unlocked: drag the frames to move them, drag a corner to resize.' },
+    { '/ch scale <0.5-4|auto>',    'Size multiplier for the frames. auto follows the game resolution.' },
+    { '/ch mode <party|alliance1|alliance2>', 'How many members to show: 6, 12 or 18 (the numbers work too).' },
+    { '/ch orient <columns|stacked|rows>',    'How the parties are laid out.' },
+    { '/ch demo [on|off]',         'Demo mode: a fake party for trying layouts. It never casts. No argument switches it.' },
+    { '/ch status',                'Show what is switched on and where other members\' status effects come from.' },
+    { '/ch reset confirm',         'Put every setting back to its default.' },
+    { '/ch apicheck',              'List the game functions this install is missing. Handy to include in a bug report.' },
+    { '/ch help',                  'Print this list in the chat log.' },
 }
 
 local function lower(v) return v and tostring(v):lower() or nil end
@@ -58,16 +58,12 @@ function commands.run(args, s)
         local live = require('ch.livebuffs')
         say(string.format('status effects: %d members from game data, %d from chat   chat lines seen: %d',
             live.count(), require('ch.chatstatus').count(), require('ch.chatstatus').seen))
-        local cs = require('ch.chatstatus')
-        if cs.last_raw then
-            say('last "effect" line, raw bytes: ' .. cs.last_raw:gsub('[^\32-\126]', function(c) return '<' .. c:byte() .. '>' end))
-        end
         if not s.locked then say('The hover menu only works while LOCKED. /ch lock') end
         if not s.flyout then say('The hover spell menu is off (Spells page).') end
         if not s.visible then say('Frames are hidden. /ch show') end
 
     elseif cmd == 'help' or cmd == '?' then
-        for _, l in ipairs(HELP) do say(l) end
+        for _, c in ipairs(commands.LIST) do say(string.format('%-34s %s', c[1], c[2])) end
 
     elseif cmd == 'show' then
         s.visible = true; out.changed = true; say('Frames shown.')
@@ -114,11 +110,6 @@ function commands.run(args, s)
         s.demo = onoff(a3, s.demo); out.changed = true
         say('Demo data: ' .. (s.demo and 'on' or 'off'))
 
-    elseif cmd == 'cursor' then
-        out.cursor = (args[3] ~= 'off')
-        say('Cursor test ' .. (out.cursor and 'on: a crosshair is drawn where ImGui thinks the mouse is. /ch cursor off to stop.' or 'off.'))
-    elseif cmd == 'partydump' then
-        out.party_dump = true
     elseif cmd == 'apicheck' then
         out.api_check = true     -- handled by the entry file (needs the live ImGui tables)
 

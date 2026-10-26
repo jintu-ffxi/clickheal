@@ -14,6 +14,7 @@ local debuffs  = require('ch.debuffs')
 local spells   = require('ch.spells')
 local layout   = require('ch.layout')
 local fonts    = require('ch.fonts')
+local commands = require('ch.commands')
 
 local M = {}
 
@@ -625,7 +626,7 @@ local function page_casting(s)
     section('Casting')
     changed = checkbox('Queue clicks while casting', s, 'queue_clicks', 'A click made mid-cast is held and sent the moment you can act, so you can click spells one after another.') or changed
     if s.demo then
-        warn_text('Demo data is on, so clicks never cast. Turn it off on the Debug page.')
+        warn_text('Demo data is on, so clicks never cast. Turn it off on the Demo page.')
     else
         hint('A click sends a normal /ma or /ja. Only use this where addons are allowed.')
     end
@@ -658,7 +659,6 @@ local function page_general(s, ctx)
 
     section('This window')
     changed = combo('Setup text size', s, 'ui_zoom', TEXT_SIZE_OPTIONS, 'Text size in this setup window (sidebar, labels, options). The window and its controls keep their size. 100 = normal. Use the frame sizes on the Appearance page for the party frames.') or changed
-    changed = checkbox('Fix mouse after resizing the game window', s, 'mouse_fix', 'Experimental. If the game window is not the same size as the game picture, the mouse lands off target. This corrects it for the party frames and the spell menu (not this setup panel). Test it with /ch cursor.') or changed
 
     section('Reset')
     if reset_armed then
@@ -680,30 +680,31 @@ end
 local function page_demo(s)
     local changed = false
     local d = s.debug
-    section('Demo data')
-    hint('For trying layouts without a party. Demo members never cast.')
-    changed = checkbox('Demo data', s, 'demo', 'On = a fake party for trying the layout. Off = your real party.') or changed
+    section('Demo mode')
+    hint('A fake party for trying layouts, with no party needed. Demo members never cast.')
+    changed = checkbox('Demo mode', s, 'demo', 'On = a fake party. Off = your real party. The DEMO MODE button at the top does the same.') or changed
     if s.demo then
         changed = checkbox('Show alliance debuffs', s, 'demo_alliance_debuffs', 'Pretend the alliance members have debuffs you can see.') or changed
-    else
-        changed = checkbox('Fill empty alliance slots', s, 'demo_fill', 'Keeps your real party live and adds fake alliance members so you can see and test the alliance layout. Clicks on fake members only log, they never cast.') or changed
-    end
-
-    if s.demo then
         section('Sample status effects')
-        hint('Demo mode only. Handy for testing the icon rows and the triage priorities.')
+        hint('Handy for trying the icon rows and the triage priorities.')
         changed = checkbox('Give everyone debuffs', d, 'force_debuffs', 'Every demo member gets a sample set of debuffs (poison, slow, doom ...).') or changed
         changed = checkbox('Give everyone buffs', d, 'force_buffs', 'Every demo member gets a sample set of buffs (haste, protect, regen ...).') or changed
+    else
+        changed = checkbox('Fill empty alliance slots', s, 'demo_fill', 'Keeps your real party live and adds fake alliance members so you can try the alliance layout. Clicks on fake members only log, they never cast.') or changed
     end
-
-    section('Overlays and logging')
-    changed = checkbox('Mouse crosshair', d, 'cursor', 'A crosshair where ImGui thinks the mouse is, with the numbers behind it. Same as /ch cursor.') or changed
-    changed = checkbox('Log clicks', d, 'input', 'Prints one chat line for every click, saying which window saw it.') or changed
-
-    section('Commands')
-    hint('/ch  /ch lock  /ch unlock  /ch scale <n|auto>  /ch mode <party|alliance1|alliance2>')
-    hint('/ch demo  /ch cursor  /ch status  /ch partydump  /ch apicheck  /ch help')
     return changed
+end
+
+--- Every slash command and what it does (the same list /ch help prints).
+local function page_commands()
+    section('Slash commands')
+    hint('Type these in the game chat. /clickheal works in place of /ch.')
+    for _, c in ipairs(commands.LIST) do
+        with_color(ACCENT, function() imgui.TextWrapped(esc(c[1])) end)
+        with_color(DIM, function() imgui.TextWrapped(esc(c[2])) end)
+        imgui.Spacing()
+    end
+    return false
 end
 
 local function page_spells_all(s, ctx)
@@ -719,7 +720,8 @@ M.PAGES = {
     { 'Alerts',           page_alerts },
     { 'Casting',          page_casting },
     { 'General',          page_general },
-    { 'Debug',            page_demo },
+    { 'Demo',             page_demo },
+    { 'Commands',         page_commands },
 }
 
 -- ---------------------------------------------------------------------------------------------
@@ -784,7 +786,7 @@ function M.draw(s, ctx)
     -- Opens at a comfortable size, never larger than the screen, and cannot be dragged smaller than
     -- the point where the page layout stops being usable.
     local win_w = math.max(520 * win_sc, math.min(760 * win_sc, disp_w - 60))
-    local win_h = math.max(380 * win_sc, math.min(600 * win_sc, disp_h - 80))
+    local win_h = math.max(380 * win_sc, math.min(680 * win_sc, disp_h - 80))
     imgui.SetNextWindowSize({ win_w, win_h }, cond_first)
     pcall(imgui.SetNextWindowSizeConstraints, { math.min(520 * win_sc, disp_w - 20), math.min(380 * win_sc, disp_h - 20) },
         { disp_w, disp_h })
@@ -811,19 +813,22 @@ function M.draw(s, ctx)
 
             -- Sidebar: as wide as its longest page name.
             local nav_w = 0
-            local nav_h = text_h() + 14 * sc   -- tall enough for the zoomed text
+            local nav_h = text_h() + 8 * sc    -- tall enough for the zoomed text
             for _, p in ipairs(M.PAGES) do nav_w = math.max(nav_w, text_w('  ' .. p[1])) end
             nav_w = math.floor(nav_w + 52 * sc)   -- text + child padding + a possible scrollbar
             local nav_began, nav_vis = begin_child('##nav', nav_w, 0)
             if nav_began then
                 if nav_vis then
+                    -- Tight rows: every page must fit in the sidebar without scrolling (the last ones were cut off).
+                    local sp = _G.ImGuiStyleVar_ItemSpacing and pcall(imgui.PushStyleVar, _G.ImGuiStyleVar_ItemSpacing, { 10 * sc, 3 * sc })
                     local nok, nerr = pcall(function()
                         for i, p in ipairs(M.PAGES) do
-                            if imgui.Selectable('  ' .. p[1] .. '##nav' .. i, M.page == i, 0, { 0, math.floor(math.max(30 * sc, nav_h)) }) then
+                            if imgui.Selectable('  ' .. p[1] .. '##nav' .. i, M.page == i, 0, { 0, math.floor(math.max(26 * sc, nav_h)) }) then
                                 M.page = i
                             end
                         end
                     end)
+                    if sp then pcall(imgui.PopStyleVar, 1) end
                     if not nok then fail('navigation: ' .. tostring(nerr)) end
                 end
                 imgui.EndChild()

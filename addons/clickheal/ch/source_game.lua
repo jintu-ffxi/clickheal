@@ -276,8 +276,6 @@ function game.player(_)
     }
 end
 
---- /ch partydump: prints what the party memory says about status icons, so we can see how other
--- members' debuffs are laid out on this client. Read only. `emit(line)` gets each line.
 --- Progress of the game's own cast bar, 0..1, or nil when it cannot be read.
 function game.castbar()
     local core = _G.AshitaCore
@@ -288,40 +286,6 @@ function game.castbar()
     if type(pct) ~= 'number' then return nil end
     if pct > 1 then pct = pct / 100 end
     return math.max(0, math.min(1, pct))
-end
-
-function game.dump_status(emit)
-    local party = managers()
-    if not party then emit('partydump: party memory not available (not logged in?)'); return end
-    local function show(v)
-        local t = type(v)
-        if t == 'table' then
-            local parts = {}
-            for k, x in pairs(v) do
-                if x ~= 0 and x ~= 255 and x ~= -1 then parts[#parts + 1] = tostring(k) .. '=' .. tostring(x) end
-                if #parts >= 24 then parts[#parts + 1] = '...'; break end
-            end
-            return 'table{' .. table.concat(parts, ',') .. '}'
-        end
-        return t .. ' ' .. tostring(v)
-    end
-    emit('--- partydump (slots 0-5) ---')
-    for slot = 0, 5 do
-        if (call(party, 'GetMemberIsActive', slot) or 0) > 0 then
-            emit(string.format('slot %d %s: serverid=%s target=%s mask=%s', slot, tostring(call(party, 'GetMemberName', slot)),
-                tostring(call(party, 'GetStatusIconsServerId', slot)), tostring(call(party, 'GetStatusIconsTargetIndex', slot)),
-                tostring(call(party, 'GetStatusIconsBitMask', slot))))
-            emit('  GetStatusIcons(' .. slot .. ') = ' .. show(call(party, 'GetStatusIcons', slot)))
-        end
-    end
-    -- Flat-array layout probe: non-empty values across the first 5 x 32 entries.
-    local flat = {}
-    for i = 0, 159 do
-        local v = call(party, 'GetStatusIcons', i)
-        if type(v) == 'number' and v ~= 0 and v ~= 255 then flat[#flat + 1] = i .. '=' .. v end
-    end
-    emit('  flat GetStatusIcons(0..159) non-empty: ' .. (#flat > 0 and table.concat(flat, ' ') or '(none)'))
-    emit('--- end partydump: cast a debuff on a party member, run again, and send both outputs ---')
 end
 
 return game
