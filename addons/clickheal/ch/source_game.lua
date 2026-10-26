@@ -51,17 +51,19 @@ local function managers()
     return call(mem, 'GetParty'), call(mem, 'GetPlayer'), call(mem, 'GetEntity'), call(mem, 'GetRecast')
 end
 
+local function at(list, i) return list[i] end   -- a named function, so pcall(at, ...) allocates no closure
+
 --- Reads a list the game hands back. Ashita returns these as userdata arrays, not Lua tables, so index
 -- 0..n (or 1..n when 0 is empty) under pcall. Returns a plain array of numbers, or nil if it is not indexable.
 local function read_list(list, n)
     if list == nil then return nil end
     local out, got = {}, false
     local first = 0
-    local ok0, v0 = pcall(function() return list[0] end)
+    local ok0, v0 = pcall(at, list, 0)
     if not ok0 then return nil end
     if v0 == nil then first = 1 end
     for i = 0, n - 1 do
-        local ok, v = pcall(function() return list[first + i] end)
+        local ok, v = pcall(at, list, first + i)
         if ok and v ~= nil then
             v = tonumber(v)
             if v then out[#out + 1] = v; got = true end

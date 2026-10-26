@@ -49,6 +49,57 @@ function frame.apply_debug(list, cfg)
     return out
 end
 
+-- spells.fit builds a whole new preset, and it only changes when the player's job, levels or learned-spell table do.
+local fit_memo = {}
+local function fitted(preset, p)
+    local m = fit_memo
+    if m.out and m.preset == preset and m.job == p.job and m.sub == p.sub and m.level == p.level
+        and m.sublevel == p.sublevel and m.learned == p.learned then
+        return m.out
+    end
+    m.preset, m.job, m.sub, m.level, m.sublevel, m.learned = preset, p.job, p.sub, p.level, p.sublevel, p.learned
+    m.out = spells.fit(preset, p)
+    return m.out
+end
+
+-- layout.compute builds a table per card; its result only changes with the options, so reuse it while they are equal.
+local layout_memo = { opts = nil, disp_h = nil, geom = nil }
+local function same_value(a, b)
+    if a == b then return true end
+    if type(a) ~= 'table' or type(b) ~= 'table' or #a ~= #b then return false end   -- only flat arrays (the group list)
+    for i = 1, #a do if a[i] ~= b[i] then return false end end
+    return true
+end
+local function computed(lopts, disp_h)
+    local m = layout_memo
+    local prev = m.opts
+    local same = prev ~= nil and m.disp_h == disp_h
+    if same then
+        local n = 0
+        for k, v in pairs(lopts) do
+            if not same_value(prev[k], v) then same = false; break end
+            n = n + 1
+        end
+        if same then
+            for _ in pairs(prev) do n = n - 1 end
+            same = (n == 0)
+        end
+    end
+    if not same then
+        local copy = {}
+        for k, v in pairs(lopts) do
+            if type(v) == 'table' then
+                local arr = {}
+                for i = 1, #v do arr[i] = v[i] end
+                v = arr
+            end
+            copy[k] = v
+        end
+        m.opts, m.disp_h, m.geom = copy, disp_h, layout.compute(lopts, disp_h)
+    end
+    return m.geom
+end
+
 --- source: { roster = function(t, cfg) -> array, player = function(t) -> table }
 function frame.build(cfg, source, t, disp_w, disp_h, dismissed)
     local roster_list = frame.apply_debug(source.roster(t, cfg), cfg)
@@ -61,7 +112,7 @@ function frame.build(cfg, source, t, disp_w, disp_h, dismissed)
     local player = casting.decorate(source.player(t), t)
     local preset, preset_name = spells.preset_for(player.job, player.sub)
     -- Only what the player can use (sub job at half level, learned spells), unless they asked to see the rest greyed out.
-    if not cfg.show_locked then preset = spells.fit(preset, player) end
+    if not cfg.show_locked then preset = fitted(preset, player) end
 
     local groups = layout.groups_for(cfg.mode, true, present)
     local lopts = {
@@ -84,7 +135,7 @@ function frame.build(cfg, source, t, disp_w, disp_h, dismissed)
         end
         lopts.triage_n = math.min(17, math.max(0, n - 1))
     end
-    local geom = layout.compute(lopts, disp_h)
+    local geom = computed(lopts, disp_h)
 
     local list, total = alerts.build(roster_list, cfg, preset, t, dismissed or {})
     local more = math.max(0, (total or #list) - #list)

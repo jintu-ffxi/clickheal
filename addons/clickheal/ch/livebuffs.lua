@@ -47,7 +47,7 @@ function live.feed(id, data, now)
                         ids[v + 256 * hi] = true
                     end
                 end
-                state[uid] = { ids = ids, t = now }
+                state[uid] = { ids = ids, t = now }   -- a new entry also drops the cached list
                 changed = true
             end
         end
@@ -59,20 +59,25 @@ function live.feed(id, data, now)
         if not WEAR_OFF[msg] then return false end
         local e = state[u32(data, 0x08)]
         local eff = u32(data, 0x0C)
-        if e and e.ids[eff] then e.ids[eff] = nil; return true end
+        if e and e.ids[eff] then e.ids[eff] = nil; e.list = nil; return true end
         return false
     end
     if id == 0x00A then live.reset(); return true end
     return false
 end
 
---- The effect ids known for a server id, as a list, or nil when no status packet has named this member.
+--- The effect ids known for a server id, as a sorted list, or nil when no status packet has named this member.
+-- The list is built once per change and shared between calls: treat it as read-only.
 function live.get(uid)
     local e = uid and state[uid]
     if not e then return nil end
-    local out = {}
-    for id in pairs(e.ids) do out[#out + 1] = id end
-    table.sort(out)
+    local out = e.list
+    if not out then
+        out = {}
+        for id in pairs(e.ids) do out[#out + 1] = id end
+        table.sort(out)
+        e.list = out
+    end
     return out
 end
 

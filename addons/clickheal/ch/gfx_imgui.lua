@@ -46,6 +46,11 @@ M.xy = xy
 
 local function px(v) return floor(v + 0.5) end
 
+local function field(obj, name) return obj[name] end   -- named, so pcall(field, ...) allocates no closure
+local function is_clicked(btn) local ok, v = pcall(imgui.IsMouseClicked, btn); return ok and v == true end
+local function is_down(btn) local ok, v = pcall(imgui.IsMouseDown, btn); return ok and v == true end
+local function key_down(io, name) local ok, v = pcall(field, io, name); return ok and v == true end
+
 -- ---------------------------------------------------------------------------------------------
 -- state
 -- ---------------------------------------------------------------------------------------------
@@ -58,9 +63,16 @@ local draw_list    = nil
 local var_pushes   = 0
 local rounded_ok   = true
 
+-- Colours and text sizes are cached because the ImGui calls behind them are slow. Both are keyed by values that can be
+-- practically unbounded (an HP gradient, a dragged opacity slider, changing text), so each is emptied when it grows large.
+local CACHE_MAX = 4096
+local color_n, size_n = 0, 0
+
 local function u32(c)
     local v = color_cache[c]
     if v == nil then
+        if color_n >= CACHE_MAX then color_cache, color_n = {}, 0 end
+        color_n = color_n + 1
         local r, g, b, a = theme.unpack(c)
         local ok, res = pcall(imgui.GetColorU32, { r, g, b, a })
         -- Fallback: our packed integer already uses ImGui's IM_COL32 layout.
@@ -74,7 +86,7 @@ end
 function M.set_font_scale(s)
     if s ~= font_scale then
         font_scale = s
-        size_cache = {}
+        size_cache, size_n = {}, 0
     end
 end
 
@@ -92,7 +104,7 @@ end
 function M.display_size()
     local ok, io = pcall(imgui.GetIO)
     if ok and io then
-        local okd, ds = pcall(function() return io.DisplaySize end)
+        local okd, ds = pcall(field, io, 'DisplaySize')
         if okd and ds then
             local w, h = xy(ds)
             if w and h and w > 0 and h > 0 then return w, h end
@@ -107,32 +119,20 @@ function M.input()
     local okm, a, b = pcall(imgui.GetMousePos)
     if okm then mx, my = xy(a, b) end
 
-    local function clicked(btn)
-        local ok, v = pcall(imgui.IsMouseClicked, btn)
-        return ok and v == true
-    end
-    local function down(btn)
-        local ok, v = pcall(imgui.IsMouseDown, btn)
-        return ok and v == true
-    end
     local okh, hovered = pcall(imgui.IsWindowHovered)
 
     local mods = { shift = false, ctrl = false, alt = false }
     local oki, io = pcall(imgui.GetIO)
     if oki and io then
-        local function get(name)
-            local ok, v = pcall(function() return io[name] end)
-            return ok and v == true
-        end
-        mods.shift, mods.ctrl, mods.alt = get('KeyShift'), get('KeyCtrl'), get('KeyAlt')
+        mods.shift, mods.ctrl, mods.alt = key_down(io, 'KeyShift'), key_down(io, 'KeyCtrl'), key_down(io, 'KeyAlt')
     end
 
     return {
         mx = mx, my = my,
         hovered = okh and hovered == true,
         interactive = true,
-        clicked = { left = clicked(0), right = clicked(1), middle = clicked(2) },
-        down = { left = down(0) },
+        clicked = { left = is_clicked(0), right = is_clicked(1), middle = is_clicked(2) },
+        down = { left = is_down(0) },
         mods = mods,
     }
 end
@@ -243,16 +243,22 @@ end
 -- drawing
 -- ---------------------------------------------------------------------------------------------
 
+local P1, P2 = { 0, 0 }, { 0, 0 }   -- scratch points: the binding copies them during the call, so they are safe to reuse
+local rounded_proven = false
+
 function M.rect_filled(x, y, w, h, c, rounding)
     if not draw_list or w <= 0 or h <= 0 then return end
-    local x1, y1 = px(x), px(y)
-    local p1, p2 = { x1, y1 }, { px(x + w), px(y + h) }
+    P1[1], P1[2], P2[1], P2[2] = px(x), px(y), px(x + w), px(y + h)
     if rounded_ok and rounding and rounding > 0 then
-        local ok = pcall(draw_list.AddRectFilled, draw_list, p1, p2, u32(c), rounding)
-        if ok then return end
+        if rounded_proven then
+            draw_list:AddRectFilled(P1, P2, u32(c), rounding)   -- worked before with this exact call
+            return
+        end
+        local ok = pcall(draw_list.AddRectFilled, draw_list, P1, P2, u32(c), rounding)
+        if ok then rounded_proven = true; return end
         rounded_ok = false   -- this build does not accept the rounding argument
     end
-    draw_list:AddRectFilled(p1, p2, u32(c))
+    draw_list:AddRectFilled(P1, P2, u32(c))
 end
 
 -- Slanted shapes. UNVERIFIED: needs draw_list:AddQuadFilled / AddQuad. If the build lacks them (or
@@ -315,21 +321,28 @@ function M.spell_icon(x, y, size, key)
     return true
 end
 
+local TP = { 0, 0 }   -- scratch point for text (the binding copies it during the call)
+
 function M.text(x, y, c, s)
     if not draw_list or s == '' then return end
-    draw_list:AddText({ px(x), px(y) }, u32(c), s)
+    TP[1], TP[2] = px(x), px(y)
+    draw_list:AddText(TP, u32(c), s)
 end
 
 -- Smaller text (k < 1) via the draw list's font-size overload. UNVERIFIED in this ImGui binding: if the call
 -- fails once, scaled text is turned off and the normal size is used (text_size_scaled follows suit).
-local scaled_ok = true
+local scaled_ok, scaled_proven = true, false
+local function add_scaled(x, y, c, s, k)
+    TP[1], TP[2] = px(x), px(y)
+    draw_list:AddText(imgui.GetFont(), imgui.GetFontSize() * k, TP, u32(c), s)
+end
+
 function M.text_scaled(x, y, c, s, k)
     if not draw_list or s == '' then return end
     if math.abs(k - 1) < 0.01 or not scaled_ok then return M.text(x, y, c, s) end
-    local ok = pcall(function()
-        draw_list:AddText(imgui.GetFont(), imgui.GetFontSize() * k, { px(x), px(y) }, u32(c), s)
-    end)
-    if not ok then scaled_ok = false; return M.text(x, y, c, s) end
+    if scaled_proven then return add_scaled(x, y, c, s, k) end   -- worked before: no pcall, no closure
+    local ok = pcall(add_scaled, x, y, c, s, k)
+    if ok then scaled_proven = true else scaled_ok = false; return M.text(x, y, c, s) end
 end
 
 function M.text_size_scaled(s, k)
@@ -344,6 +357,8 @@ function M.text_size(s)
     local ok, a, b = pcall(imgui.CalcTextSize, s)
     local w, h
     if ok then w, h = xy(a, b) else w, h = #s * 7 * font_scale, 13 * font_scale end
+    if size_n >= CACHE_MAX then size_cache, size_n = {}, 0 end
+    size_n = size_n + 1
     size_cache[s] = { w, h }
     return w, h
 end

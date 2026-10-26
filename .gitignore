@@ -18,3 +18,6 @@ media_json/
 tools/__pycache__/
 media_icons/
 dist/
+
+# local benchmark results (tests/bench.lua)
+bench/

@@ -130,6 +130,24 @@ end)
 -- drawing
 -- ---------------------------------------------------------------------------------------------
 
+-- Game memory is sampled at SAMPLE_HZ, not every frame: HP, distance and recasts move far slower than the render
+-- rate, and each sample is hundreds of protected memory reads. Frames in between draw the last sample.
+local SAMPLE_HZ = 15
+local held = { src = nil, at = -1, roster = nil, player = nil }
+local held_source = {
+    roster = function() return held.roster end,
+    player = function() return held.player end,
+}
+
+local function sampled(source, t)
+    if source == demo then return source end            -- the demo source is cheap and animates by time
+    if held.src ~= source or t < held.at or t - held.at >= 1 / SAMPLE_HZ then
+        held.src, held.at = source, t
+        held.roster, held.player = source.roster(t, cfg), source.player(t)
+    end
+    return held_source
+end
+
 local function draw()
     if state.api_check then
         state.api_check = nil
@@ -140,7 +158,7 @@ local function draw()
     local source = cfg.demo and demo or ((cfg.demo_fill and mixed) or game_source)
 
     casting.observe(t, source.castbar and source.castbar() or nil)   -- the game's own cast bar, when it can be read
-    local fr = frame.build(cfg, source, t, disp_w, disp_h, state.dismissed)
+    local fr = frame.build(cfg, sampled(source, t), t, disp_w, disp_h, state.dismissed)
     gfx.set_font_scale(fr.geom.scale * cfg.font_mult)
 
     local events = {}
@@ -149,13 +167,14 @@ local function draw()
         preset = fr.preset, now = t, events = events, disp_w = disp_w, disp_h = disp_h,
     }
 
+    local base_mt = { __index = base }   -- each window's context reads the shared frame fields through this
+
     if cfg.visible then
         -- Roster panel.
         local px, py = gfx.begin_surface('ClickHeal', cfg.pos.x, cfg.pos.y, fr.geom.width, fr.geom.height,
             { movable = not cfg.locked, force_pos = state.force_pos, back = true })
         if px then
-            local f = {}
-            for k, v in pairs(base) do f[k] = v end
+            local f = setmetatable({}, base_mt)
             f.ox, f.oy = px, py
             f.input = gfx.input()
             f.input.interactive = cfg.locked
@@ -175,8 +194,7 @@ local function draw()
             local ax, ay = gfx.begin_surface('ClickHeal Alerts', ap.x, ap.y, fr.abar.w, fr.abar.h,
                 { movable = not cfg.locked, force_pos = state.force_pos, back = true })
             if ax then
-                local f = {}
-                for k, v in pairs(base) do f[k] = v end
+                local f = setmetatable({}, base_mt)
                 f.ox, f.oy = ax, ay
                 f.abar, f.alerts, f.more, f.placeholder = fr.abar, fr.alerts, fr.alert_more, placeholder
                 f.input = gfx.input()
@@ -193,16 +211,14 @@ local function draw()
     end
     -- Hover flyout: a small window beside the hovered member's row (Grid / Strip layouts).
     if cfg.visible and cfg.locked and cfg.flyout then
-        local pf = {}
-        for k, v in pairs(base) do pf[k] = v end
+        local pf = setmetatable({}, base_mt)
         pf.input = nil
         local plan = ui.flyout_plan(pf)
         if plan then
             local fx, fy = gfx.begin_surface('ClickHeal Flyout', plan.x, plan.y, plan.w, plan.h,
                 { movable = false, force_pos = true })
             if fx then
-                local f = {}
-                for k, v in pairs(base) do f[k] = v end
+                local f = setmetatable({}, base_mt)
                 f.ox, f.oy, f.plan = fx, fy, plan
                 f.input = gfx.input()
                 f.input.interactive = true

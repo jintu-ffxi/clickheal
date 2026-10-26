@@ -116,9 +116,27 @@ local function chip(f, x, y, h, text, fg, bg, dim)
     return w
 end
 
+-- Strings that are rebuilt for every member every frame but come from a tiny set of values: made once and kept.
+-- Each table is emptied when it grows large, so odd names or numbers cannot make it grow without bound.
+local text_memo, text_memo_n = { upper = {}, dist = {}, int = {} }, 0
+local function memo(kind, key, make)
+    local t = text_memo[kind]
+    local v = t[key]
+    if v == nil then
+        if text_memo_n >= 1024 then text_memo = { upper = {}, dist = {}, int = {} }; text_memo_n = 0; t = text_memo[kind] end
+        v = make(key)
+        t[key] = v; text_memo_n = text_memo_n + 1
+    end
+    return v
+end
+local function make_upper(n) return n:upper() end
+local function make_dist(d) return string.format('%dy', d) end
+local function make_int(n) return string.format('%d', n) end
+local function upper(name) return memo('upper', name, make_upper) end
+
 local function dist_text(m)
     if not m.dist then return '--' end
-    return string.format('%dy', floor(m.dist + 0.5))
+    return memo('dist', floor(m.dist + 0.5), make_dist)
 end
 
 local function sorted_debuffs(m)
@@ -612,7 +630,7 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
         icons_xr = min(xr, mx - floor(6 * s))
     end
 
-    local name = m.name:upper()
+    local name = upper(m.name)
     local nk = f.cfg.name_scale or 1
     local show_d = f.cfg.show_dist and not m.is_you
     local dist_w = show_d and (g.text_size(dist_text(m)) + floor(6 * s)) or 0
@@ -808,7 +826,7 @@ local function draw_hairline(f, m, r, out_of_range, near_limit, dim)
 
     -- Large percentage on the right, colored by health, small % sign; MP percent under it.
     local k = eff(f).hl_pct or 2.0
-    local num = m.dead and 'KO' or string.format('%d', floor(m.hpp or 0))
+    local num = m.dead and 'KO' or memo('int', floor(m.hpp or 0), make_int)
     local nw, nh = g.text_size_scaled(num, k)
     local sw = m.dead and 0 or (g.text_size_scaled('%', 0.55) + floor(1 * s))
     local px, py = xr - nw - sw, r.y + floor(1 * s)
@@ -835,7 +853,7 @@ local function draw_hairline(f, m, r, out_of_range, near_limit, dim)
     -- Name in tracked capitals, then the job and the distance.
     local y1 = r.y + floor(3 * s)
     local nx = xl
-    local name = m.name:upper()
+    local name = upper(m.name)
     local show_d = f.cfg.show_dist and not m.is_you
     local dt = show_d and dist_text(m) or nil
     local dist_w = dt and (g.text_size(dt) + floor(8 * s)) or 0
@@ -1035,7 +1053,7 @@ local function draw_triage(f)
     -- Head: name large, job small, missing HP on the right.
     local hy = my + M.pad
     local kn = 1.35
-    local nm = fit(g, feat.name:upper(), floor(M.w * 0.5))
+    local nm = fit(g, upper(feat.name), floor(M.w * 0.5))
     local nw, nh = g.text_size_scaled(nm, kn)
     local ny = hy + floor((M.head_h - nh) / 2)
     g.rect_filled(x0, hy + floor(2 * s), max(2, floor(2 * s)), M.head_h - floor(4 * s), A(theme.pack(jr, jg, jb, 1.0), dim), 0)
@@ -1113,7 +1131,7 @@ local function draw_triage(f)
             local pcol = m.dead and pal.bad or theme.hp_color(pal, mf)
             local ty2 = two and (rr.y + floor(2 * s)) or (rr.y + floor((rr.h - th) / 2))
             g.text(rr.x + rr.w - g.text_size(pt) - floor(3 * s), ty2, A(pcol, d2), pt)
-            local nm2 = fit(g, m.name:upper(), floor(rr.w * 0.34))
+            local nm2 = fit(g, upper(m.name), floor(rr.w * 0.34))
             g.text(rr.x + floor(8 * s), ty2, name_color(f, m, d2), nm2)
             local bx = rr.x + floor(rr.w * 0.40)
             local bw2 = rr.x + rr.w - pw - floor(10 * s) - bx

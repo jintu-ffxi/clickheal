@@ -21,8 +21,13 @@ do
     icons.ready = ok and dev ~= nil
 end
 
-local cache = {}   -- "id:size" -> { tex = cdata, ptr = number } | false
+-- cache[size][status id] -> { tex = cdata, ptr = number } | false. Nested, so a lookup builds no key string.
+-- When it fills up (sizes pile up while the scale is dragged) the whole generation is retired, not freed: a texture
+-- handed out earlier this frame may still be in the draw list, and releasing it before the frame renders would draw
+-- a dead texture. The retired generation is only dropped at the next overflow, and anything still used is promoted back.
+local cache, retired = {}, {}
 local cached_n = 0
+local CACHE_MAX = 400
 
 local D3DX_FILTER_TRIANGLE = 4   -- a proper averaging filter; the default one is much softer when shrinking
 
@@ -34,14 +39,19 @@ local D3DX_FILTER_TRIANGLE = 4   -- a proper averaging filter; the default one i
 function icons.texture(status_id, size)
     if not icons.ready or not status_id then return nil end
     size = size and math.max(8, math.min(128, math.floor(size + 0.5))) or nil
-    local key = status_id .. ':' .. (size or 0)
-    local hit = cache[key]
+    local skey = size or 0
+    local bucket = cache[skey]
+    if not bucket then bucket = {}; cache[skey] = bucket end
+    local hit = bucket[status_id]
     if hit ~= nil then return hit and hit.ptr or nil end
-    if cached_n > 400 then cache, cached_n = {}, 0 end   -- sizes pile up while the scale is dragged
+    local old = retired[skey]
+    hit = old and old[status_id]
+    if hit ~= nil then bucket[status_id] = hit; cached_n = cached_n + 1; return hit and hit.ptr or nil end
+    if cached_n > CACHE_MAX then retired, cache, cached_n = cache, {}, 0; bucket = {}; cache[skey] = bucket end
 
     local custom = icons.file_texture('status', tostring(status_id))
     if custom then
-        cache[key] = { ptr = custom }; cached_n = cached_n + 1
+        bucket[status_id] = { ptr = custom }; cached_n = cached_n + 1
         return custom
     end
 
@@ -66,10 +76,10 @@ function icons.texture(status_id, size)
         if ok then res = r end
     end
     if res then
-        cache[key] = res; cached_n = cached_n + 1
+        bucket[status_id] = res; cached_n = cached_n + 1
         return res.ptr
     end
-    cache[key] = false; cached_n = cached_n + 1
+    bucket[status_id] = false; cached_n = cached_n + 1
     icons.failed = icons.failed + 1
     return nil
 end
