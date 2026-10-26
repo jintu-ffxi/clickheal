@@ -11,7 +11,7 @@
 
 addon.name    = 'clickheal'
 addon.author  = 'Jintu'
-addon.version = '1.0.1'
+addon.version = '1.0.2'
 addon.desc    = 'Click-to-heal party and alliance frames with a hover spell menu, alerts and triage view.'
 addon.link    = 'https://github.com/jintu-ffxi/clickheal'
 

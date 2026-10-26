@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- The cast progress bar no longer jumps back and restarts when you start a cast. It now follows the game's own cast bar and waits for it to start.
+- Faster and lighter in game: the party is read about 15 times a second instead of every frame, and the per-frame drawing work and memory churn are roughly halved. No visible change.
+- Fixed memory that could keep growing while dragging the scale or changing opacity, and a status icon being released while still on screen.
+
 ## 1.0.1
 
 - Casts are no longer echoed to the chat log (the game already shows them).
