@@ -12,6 +12,8 @@
 local imgui = require('imgui')
 local theme = require('ch.theme')
 local icons = require('ch.icons')
+local fonts = require('ch.fonts')
+local mousefix = require('ch.mousefix')
 
 local M = {}
 
@@ -50,6 +52,8 @@ local function px(v) return floor(v + 0.5) end
 -- ---------------------------------------------------------------------------------------------
 
 local font_scale   = 1.0
+local mouse_fix    = false   -- stretch the mouse position to match a resized game window
+local font_pushed  = false   -- our vector font is on the stack for the current window
 local color_cache  = {}
 local size_cache   = {}
 local draw_list    = nil
@@ -67,6 +71,8 @@ local function u32(c)
     end
     return v
 end
+
+function M.set_mouse_fix(on) mouse_fix = on and true or false end
 
 function M.set_font_scale(s)
     if s ~= font_scale then
@@ -103,6 +109,11 @@ function M.input()
     local mx, my = 0, 0
     local okm, a, b = pcall(imgui.GetMousePos)
     if okm then mx, my = xy(a, b) end
+    if mouse_fix then
+        local dw, dh = M.display_size()
+        local fx, fy = mousefix.factors(dw, dh)
+        mx, my = mx * fx, my * fy
+    end
 
     local function clicked(btn)
         local ok, v = pcall(imgui.IsMouseClicked, btn)
@@ -199,6 +210,7 @@ function M.begin_surface(id, x, y, w, h, opts)
     -- From here on Begin has happened: the caller MUST call end_surface() whatever we return.
     if not visible then return nil end
 
+    font_pushed = fonts.push()
     local okp, px_, py_ = pcall(function()
         pcall(imgui.SetWindowFontScale, font_scale)
         draw_list = imgui.GetWindowDrawList()
@@ -225,6 +237,7 @@ function M.hit_area(id, x, y, w, h)
 end
 
 function M.end_surface()
+    fonts.pop(font_pushed); font_pushed = false
     imgui.End()
     if var_pushes > 0 then
         imgui.PopStyleVar(var_pushes)
@@ -297,10 +310,10 @@ function M.status_icon(x, y, size, status_id)
     return true
 end
 
--- A user-supplied job icon (assets/jobs/<ABBR>.png). False when there is no such file.
-function M.job_icon(x, y, size, abbr)
+-- A user-supplied spell icon (assets/spells/<key>.png). False when there is no such file.
+function M.spell_icon(x, y, size, key)
     if not draw_list or not image_ok then return false end
-    local tex = icons.job_texture(abbr)
+    local tex = icons.spell_texture(key)
     if not tex then return false end
     local ok = pcall(draw_list.AddImage, draw_list, tex, { px(x), px(y) }, { px(x + size), px(y + size) })
     if not ok then image_ok = false; return false end
@@ -342,11 +355,13 @@ end
 
 function M.tooltip(lines, scale)
     imgui.BeginTooltip()
+    local fp = fonts.push()
     -- Protected so EndTooltip always runs, even if a call inside throws.
     pcall(function()
         pcall(imgui.SetWindowFontScale, font_scale)
-        for _, line in ipairs(lines) do imgui.Text(line) end
+        for _, line in ipairs(lines) do imgui.Text((tostring(line):gsub('%%', '%%%%'))) end
     end)
+    fonts.pop(fp)
     imgui.EndTooltip()
 end
 

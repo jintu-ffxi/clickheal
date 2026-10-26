@@ -32,7 +32,6 @@ local spellstate = require('ch.spellstate')
 local buffs      = require('ch.buffs')
 local bindings   = require('ch.bindings')
 local layout     = require('ch.layout')
-local jobicons   = require('ch.jobicons')
 local triage     = require('ch.triage')
 
 local ui = {}
@@ -165,6 +164,36 @@ local function paint_recast(f, x, y, size, def, left, round)
     g.text(tx, ty, pal.text, label)
 end
 
+local SPELL_DEBUFF_ICON
+--- The game status icon id that stands for a spell: the buff it applies, or the debuff it removes.
+local function spell_status_icon(def)
+    if def.buff and buffs.id_of[def.buff] then return buffs.id_of[def.buff] end
+    if not SPELL_DEBUFF_ICON then
+        local count, first = {}, {}
+        for key, info in pairs(debuffs.info) do
+            if info.spell and debuffs.id_of[key] then
+                count[info.spell] = (count[info.spell] or 0) + 1
+                first[info.spell] = debuffs.id_of[key]
+            end
+        end
+        SPELL_DEBUFF_ICON = {}
+        for spell, n in pairs(count) do if n == 1 then SPELL_DEBUFF_ICON[spell] = first[spell] end end   -- Erase covers several, so it keeps text
+    end
+    return SPELL_DEBUFF_ICON[def.key]
+end
+
+--- Draws the spell's icon inside a button when the option is on and one exists. True when drawn.
+local function draw_spell_icon(f, x, y, size, def)
+    if not f.cfg.flyout_icons then return false end
+    local g, s = f.gfx, f.geom.scale
+    local isz = size - floor(10 * s)
+    local ix, iy = x + floor((size - isz) / 2), y + floor(3 * s)
+    if g.spell_icon and g.spell_icon(ix, iy, isz, def.key) then return true end
+    local sid = spell_status_icon(def)
+    if sid and g.status_icon and g.status_icon(ix, iy, isz, sid) then return true end
+    return false
+end
+
 local function draw_button(f, x, y, size, entry, member)
     local g, pal, s = f.gfx, f.pal, f.geom.scale
     local def = entry.def
@@ -186,17 +215,20 @@ local function draw_button(f, x, y, size, entry, member)
     g.rect_filled(x + floor(4 * s), y + size - lh - floor(3 * s), size - floor(8 * s), lh,
         A(kc, (ready or busy) and 0.85 or 0.30), 0)
 
+    local with_icon = draw_spell_icon(f, x, y, size, def)
     if state == 'recast' then
         paint_recast(f, x, y, size, def, detail, round)
     else
         if not ready and state ~= 'nomp' and not busy then
             g.rect_filled(x, y, size, size, theme.pack(0, 0, 0, 0.35), round)
         end
-        local label, col = def.short, pal.text
-        if busy then col = A(pal.text, 0.72)
-        elseif not ready then col = (state == 'nomp') and pal.mp or A(pal.text_dim, 0.8) end
-        local tw, th = g.text_size(label)
-        g.text(x + floor((size - tw) / 2), y + floor((size - th) / 2) - floor(2 * s), col, label)
+        if not with_icon then
+            local label, col = def.short, pal.text
+            if busy then col = A(pal.text, 0.72)
+            elseif not ready then col = (state == 'nomp') and pal.mp or A(pal.text_dim, 0.8) end
+            local tw, th = g.text_size(label)
+            g.text(x + floor((size - tw) / 2), y + floor((size - th) / 2) - floor(2 * s), col, label)
+        end
     end
 
     -- Priority glow (pulsing accent outline) and hover outline.
@@ -468,10 +500,19 @@ local function cell_interact(f, m, r)
     }
 end
 
+--- What actually fits in the row (see layout.effective); falls back to the settings for hand-built frames.
+local function eff(f)
+    local e = f.geom.eff
+    if e then return e end
+    local c = f.cfg
+    return { debuff_icon = c.debuff_icon, buff_icon = c.buff_icon, mp_h = c.show_mp and c.mp_height or 0,
+        mp_pct = (c.show_mp and c.show_mp_pct) and c.mp_pct_scale or nil, hl_pct = c.hl_pct }
+end
+
 --- Height of the debuff/buff icon band (px).
 local function icon_band(f)
-    local s = f.geom.scale
-    return max(floor(f.cfg.debuff_icon * s), floor(f.cfg.buff_icon * s))
+    local s, e = f.geom.scale, eff(f)
+    return max(floor(e.debuff_icon * s), floor(e.buff_icon * s))
 end
 
 --- Debuff icons on the left and buff icons beside them (each takes the whole width when the other has
@@ -479,10 +520,11 @@ end
 local function draw_icon_strip(f, m, xl, xr, iy, dim)
     if m.dead or m.zone_diff then return end
     local s = f.geom.scale
-    local di, bi = floor(f.cfg.debuff_icon * s), floor(f.cfg.buff_icon * s)
+    local e = eff(f)
+    local di, bi = floor(e.debuff_icon * s), floor(e.buff_icon * s)
     local sh = max(di, bi)
     local sw = xr - xl
-    if sw < sh then return end
+    if sh <= 0 or sw < sh then return end
     local blist = f.cfg.show_buff_bar and buffs.list(m, f.cfg, f.preset) or {}
     local nd = #sorted_debuffs(m)
     local igap = floor(8 * s)
@@ -522,7 +564,7 @@ end
 local function draw_strip(f, m, r, out_of_range, near_limit, dim)
     local g, pal, geom, s = f.gfx, f.pal, f.geom, f.geom.scale
     local th = select(2, g.text_size('Ag'))
-    local sl = floor((f.cfg.slant or 0) * s)      -- how far the top edge leans (0 = square rows)
+    local sl = 0                                  -- rows are square
     local rnd = floor(4 * s)                      -- corner rounding for square rows
     local bw = floor(32 * s)                      -- job block
     local x0 = r.x + bw + floor(3 * s)            -- slanted row starts here
@@ -536,15 +578,8 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
     g.rect_filled(r.x, r.y, bw, r.h, A(block, 0.92 * dim), floor(3 * s))
     local abbr = jobs.abbr(m.job)
     local fg = (f.cfg.colors == 'mono') and pal.text or theme.pack(0.07, 0.08, 0.10, 1.0)
-    local isz = floor(min(bw, r.h) * 0.74)
-    if f.cfg.job_icon and g.job_icon and g.job_icon(r.x + floor((bw - isz) / 2), r.y + floor((r.h - isz) / 2), isz, abbr) then
-        -- the user's own icon file was drawn
-    elseif f.cfg.job_icon and jobicons.has(m.job) then
-        jobicons.draw(g, m.job, r.x + floor((bw - isz) / 2), r.y + floor((r.h - isz) / 2), isz, A(fg, dim))
-    else
-        local aw = g.text_size(abbr)
-        g.text(r.x + floor((bw - aw) / 2), r.y + floor((r.h - th) / 2) - floor(2 * s), A(fg, dim), abbr)
-    end
+    local aw = g.text_size(abbr)
+    g.text(r.x + floor((bw - aw) / 2), r.y + floor((r.h - th) / 2) - floor(2 * s), A(fg, dim), abbr)
 
     -- Slanted row background (+ outline when it is the open row).
     local bg
@@ -564,7 +599,7 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
         if frac > 0 then
             local fw = floor((tw_ - sl) * frac) + sl
             -- Deepened so the white text on top stays readable at every HP level.
-            local fc, fa = theme.hp_fill(pal, frac, { jr, jg, jb }), 0.96 * dim
+            local fc, fa = theme.hp_fill(pal, frac, { jr, jg, jb }), f.cfg.opacity_hp * dim
             if out_of_range then
                 -- Too far to cast on: wash the color out to gray so it reads as "not available".
                 fc, fa = theme.mix(fc, theme.pack(0.42, 0.42, 0.45, 1), 0.85), 0.55
@@ -599,29 +634,31 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
     g.text(right + 1, y1 + 1, theme.pack(0, 0, 0, 0.75 * dim), hpt)
     g.text(right, y1, A(m.dead and hp_text_color(f, m) or pal.text, dim), hpt)
     right = right - floor(6 * s)
-    if f.cfg.show_mp_pct and f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead then
+    local icons_xr = xr
+    if eff(f).mp_pct and f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead then
         -- MP percent sits under the HP percent, right-aligned, in a smaller size.
-        local k = f.cfg.mp_pct_scale or 0.75
+        local k = eff(f).mp_pct
         local mpt = string.format('%d%%', floor(100 * max(0, min(1, (m.mp or 0) / m.mpmax)) + 0.5))
         local mw, mh = g.text_size_scaled(mpt, k)
         local mx, my = xr - mw, y1 + th - floor(1 * s)
         g.text_scaled(mx + 1, my + 1, theme.pack(0, 0, 0, 0.75 * dim), mpt, k)
         g.text_scaled(mx, my, A(pal.mp, dim), mpt, k)
+        icons_xr = min(xr, mx - floor(6 * s))
     end
 
     local name = m.name:upper()
-    local nw = g.text_size(name)
+    local nk = f.cfg.name_scale or 1
     local show_d = f.cfg.show_dist and not m.is_you
     local dist_w = show_d and (g.text_size(dist_text(m)) + floor(6 * s)) or 0
     local chips_left = right
 
     local room = chips_left - xl - floor(4 * s)
-    local shown = fit(g, name, room - dist_w)
-    g.text(xl + 1, y1 + 1, theme.pack(0, 0, 0, 0.75 * dim), shown)
-    g.text(xl, y1, name_color(f, m, dim), shown)
+    local shown = fit(g, name, (room - dist_w) / nk)
+    g.text_scaled(xl + 1, y1 + 1, theme.pack(0, 0, 0, 0.75 * dim), shown, nk)
+    g.text_scaled(xl, y1, name_color(f, m, dim), shown, nk)
     if show_d then
         local dt = dist_text(m)
-        local dx = xl + g.text_size(shown) + floor(6 * s)
+        local dx = xl + g.text_size_scaled(shown, nk) + floor(6 * s)
         if dx + g.text_size(dt) <= chips_left then
             local dc = out_of_range and pal.bad or (near_limit and pal.warn or A(pal.text, 0.72))
             g.text(dx + 1, y1 + 1, theme.pack(0, 0, 0, 0.6 * dim), dt)
@@ -630,17 +667,18 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
     end
 
     -- A thin MP bar along the bottom edge (follows the slant). HP is the row itself.
-    local mb = max(2, floor((f.cfg.mp_height or 3) * s))
+    local e0 = eff(f)
+    local mb = max(2, floor(((e0.mp_h > 0) and e0.mp_h or min(f.cfg.mp_height or 3, 3)) * s))
     if f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead then
         local ym = r.y + r.h - mb - floor(3 * s)
         local mx0, mx1 = left_at(ym + mb / 2) + pad, right_at(ym + mb / 2) - pad
         g.rect_filled(mx0, ym, mx1 - mx0, mb, theme.pack(0, 0, 0, 0.55), 1)
         local mfw = floor((mx1 - mx0) * max(0, min(1, (m.mp or 0) / m.mpmax)))
-        if mfw > 0 then g.rect_filled(mx0, ym, mfw, mb, A(pal.mp, 0.95 * dim), 1) end
+        if mfw > 0 then g.rect_filled(mx0, ym, mfw, mb, A(pal.mp, f.cfg.opacity_mp * dim), 1) end
     end
 
     -- Icon strip along the bottom of the row, above the MP bar.
-    draw_icon_strip(f, m, xl, xr, r.y + r.h - mb - floor(4 * s) - icon_band(f), dim)
+    draw_icon_strip(f, m, xl, icons_xr, r.y + r.h - mb - floor(4 * s) - icon_band(f), dim)
 
     cell_interact(f, m, r)
 end
@@ -711,7 +749,7 @@ function ui.draw_flyout(f)
     local ox, oy = f.ox, f.oy
     local th = select(2, g.text_size('Ag'))
 
-    g.rect_filled(ox, oy, plan.w, plan.h, theme.alpha(pal.bg, 0.97), floor(5 * s))
+    g.rect_filled(ox, oy, plan.w, plan.h, theme.alpha(pal.bg, f.cfg.opacity_flyout), floor(5 * s))
     outline(g, ox, oy, plan.w, plan.h, 1, theme.alpha(pal.border, 0.95))
 
     -- Spells that fix what this member has (or Raise when KO'd) get the priority outline.
@@ -904,6 +942,26 @@ local function trail_value(f, m, frac)
     return st.v
 end
 
+--- Text with extra space between letters (the tracked small-caps look). Returns the width drawn.
+local function spaced_width(g, str, space, k)
+    local w = 0
+    for i = 1, #str do w = w + g.text_size_scaled(str:sub(i, i), k) + ((i < #str) and space or 0) end
+    return w
+end
+
+local function spaced_text(g, x, y, c, str, space, k)
+    local cx = x
+    for i = 1, #str do
+        local ch = str:sub(i, i)
+        g.text_scaled(cx, y, c, ch, k)
+        cx = cx + g.text_size_scaled(ch, k) + space
+    end
+    return cx - x - space
+end
+
+--- Hairline: no card. Name in tracked capitals with the job beside it, status icons under the name, a large
+-- health-colored percentage on the right, and one thin HP rail across the full width at the bottom
+-- (with a pale trail for what was just lost) and a hairline of MP under it. The job is a colored line.
 local function draw_hairline(f, m, r, out_of_range, near_limit, dim)
     local g, pal, s = f.gfx, f.pal, f.geom.scale
     local th = select(2, g.text_size('Ag'))
@@ -917,90 +975,97 @@ local function draw_hairline(f, m, r, out_of_range, near_limit, dim)
 
     if hot or sel then g.rect_filled(r.x, r.y, r.w, r.h, theme.pack(1, 1, 1, 0.05), floor(2 * s)) end
 
-    -- Job line (a pulsing red line when HP is critical).
+    -- Job line down the left edge (a pulsing red line when HP is critical).
     local jcol = (f.cfg.colors == 'mono') and pal.text or theme.pack(jr, jg, jb, 1.0)
-    local lw = max(2, floor(2 * s))
     if crit then jcol = pal.bad end
+    local lw = max(2, floor(2 * s))
     g.rect_filled(r.x, r.y + floor(3 * s), lw, r.h - floor(6 * s), A(jcol, (crit and (0.35 + 0.65 * pl) or 0.95) * dim), 0)
 
-    local xl = r.x + floor(9 * s)
+    local xl = r.x + floor(10 * s)
     local xr = r.x + r.w - floor(4 * s)
 
-    -- Large percentage, colored by health, with a small % sign; the MP percent goes under it.
-    local k = f.cfg.pct_scale or 1.6
+    -- Large percentage on the right, colored by health, small % sign; MP percent under it.
+    local k = eff(f).hl_pct or 2.0
     local num = m.dead and 'KO' or string.format('%d', floor(m.hpp or 0))
     local nw, nh = g.text_size_scaled(num, k)
     local sw = m.dead and 0 or (g.text_size_scaled('%', 0.55) + floor(1 * s))
-    local px, py = xr - nw - sw, r.y + floor(2 * s)
+    local px, py = xr - nw - sw, r.y + floor(1 * s)
     local pcol = m.dead and pal.bad or theme.hp_color(pal, frac)
     g.text_scaled(px + 1, py + 1, theme.pack(0, 0, 0, 0.7 * dim), num, k)
     g.text_scaled(px, py, A(pcol, dim), num, k)
     if not m.dead then
         local _, sh2 = g.text_size_scaled('%', 0.55)
-        g.text_scaled(px + nw + floor(1 * s), py + nh - sh2 - floor(2 * s), A(pcol, 0.85 * dim), '%', 0.55)
+        g.text_scaled(px + nw + floor(1 * s), py + nh - sh2 - floor(3 * s), A(pcol, 0.85 * dim), '%', 0.55)
     end
     local left = px
-    if f.cfg.show_mp_pct and f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead then
-        local k2 = f.cfg.mp_pct_scale or 0.75
+    if eff(f).mp_pct and f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead then
+        local k2 = eff(f).mp_pct
         local mpt = string.format('%d%%', floor(100 * max(0, min(1, (m.mp or 0) / m.mpmax)) + 0.5))
         local mw = g.text_size_scaled(mpt, k2)
-        g.text_scaled(xr - mw, py + nh - floor(1 * s), A(pal.mp, dim), mpt, k2)
+        g.text_scaled(xr - mw, py + nh - floor(2 * s), A(pal.mp, dim), mpt, k2)
         left = min(left, xr - mw)
     end
-    local limit = left - floor(8 * s)
+    local limit = left - floor(10 * s)
 
-    -- Name line: job icon or abbreviation, the name, then the distance.
-    local y1 = r.y + floor(4 * s)
+    -- Name in tracked capitals, then the job and the distance.
+    local y1 = r.y + floor(3 * s)
     local nx = xl
-    if f.cfg.job_icon then
-        local abbr = jobs.abbr(m.job)
-        local isz = th
-        if g.job_icon and g.job_icon(nx, y1, isz, abbr) then nx = nx + isz + floor(4 * s)
-        elseif jobicons.has(m.job) then jobicons.draw(g, m.job, nx, y1, isz, A(jcol, dim)); nx = nx + isz + floor(4 * s) end
-    end
     local name = m.name:upper()
     local show_d = f.cfg.show_dist and not m.is_you
     local dt = show_d and dist_text(m) or nil
-    local dist_w = dt and (g.text_size(dt) + floor(6 * s)) or 0
-    local shown = fit(g, name, limit - nx - dist_w)
-    g.text(nx + 1, y1 + 1, theme.pack(0, 0, 0, 0.7 * dim), shown)
-    g.text(nx, y1, name_color(f, m, dim), shown)
-    local tx = nx + g.text_size(shown) + floor(6 * s)
-    if not f.cfg.job_icon then
-        local ab = jobs.abbr(m.job)
-        if tx + g.text_size(ab) <= limit then
-            g.text(tx, y1, A(pal.text_dim, 0.8 * dim), ab)
-            tx = tx + g.text_size(ab) + floor(6 * s)
-        end
+    local dist_w = dt and (g.text_size(dt) + floor(8 * s)) or 0
+    local ab = jobs.abbr(m.job)
+    local ab_w = ab and (g.text_size(ab) + floor(8 * s)) or 0
+    local kn = 0.92 * (f.cfg.name_scale or 1)
+    local space = max(1, floor(2 * s))
+    local avail = limit - nx
+    local name_w = spaced_width(g, name, space, kn)
+    local ncol = name_color(f, m, dim)
+    local tx
+    if name_w + ab_w <= avail then
+        spaced_text(g, nx + 1, y1 + 1, theme.pack(0, 0, 0, 0.7 * dim), name, space, kn)
+        spaced_text(g, nx, y1, ncol, name, space, kn)
+        tx = nx + name_w + floor(8 * s)
+    else
+        local shown = fit(g, name, avail - ab_w)
+        g.text(nx + 1, y1 + 1, theme.pack(0, 0, 0, 0.7 * dim), shown)
+        g.text(nx, y1, ncol, shown)
+        tx = nx + g.text_size(shown) + floor(8 * s)
+    end
+    if ab and tx + g.text_size(ab) <= limit then
+        g.text(tx, y1, A(pal.text_dim, 0.8 * dim), ab)
+        tx = tx + g.text_size(ab) + floor(8 * s)
     end
     if dt and tx + g.text_size(dt) <= limit then
         local dc = out_of_range and pal.bad or (near_limit and pal.warn or A(pal.text, 0.6))
         g.text(tx, y1, A(dc, m.zone_diff and dim or 1), dt)
     end
 
-    -- HP rail with the damage trail, then a hairline of MP.
-    local ry = y1 + th + floor(3 * s)
+    -- Status icons sit under the name, left of the big percentage.
+    draw_icon_strip(f, m, xl, limit, y1 + th + floor(3 * s), dim)
+
+    -- One rail across the full width at the bottom, with the damage trail, then a hairline of MP.
+    local mph = (f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead) and max(1, floor(eff(f).mp_h * 0.5 * s)) or 0
     local rh = (hot or sel) and max(3, floor(5 * s)) or max(2, floor(3 * s))
-    local rw = limit - xl
+    local ry = r.y + r.h - floor(3 * s) - mph - floor(1 * s) - max(3, floor(5 * s))
+    local rw = xr - xl
     if rw > 4 then
         g.rect_filled(xl, ry, rw, rh, theme.pack(1, 1, 1, 0.14 * dim), 0)
         if alive then
             local tv = trail_value(f, m, frac)
             if tv > frac + 0.004 then g.rect_filled(xl, ry, floor(rw * tv), rh, theme.pack(1, 1, 1, 0.30 * dim), 0) end
-            local fc, fa = theme.hp_fill(pal, frac, { jr, jg, jb }), dim
+            local fc, fa = theme.hp_fill(pal, frac, { jr, jg, jb }), f.cfg.opacity_hp * dim
             if out_of_range then fc, fa = theme.mix(fc, theme.pack(0.42, 0.42, 0.45, 1), 0.85), 0.55 end
             if frac > 0 then g.rect_filled(xl, ry, max(1, floor(rw * frac)), rh, A(fc, fa), 0) end
         end
-        if f.cfg.show_mp and m.mpmax and m.mpmax > 0 and not m.dead then
-            local mh = max(1, floor((f.cfg.mp_height or 3) * 0.5 * s))
-            local my = ry + rh + floor(1 * s)
-            g.rect_filled(xl, my, rw, mh, theme.pack(0, 0, 0, 0.5), 0)
+        if mph > 0 then
+            local my = ry + max(3, floor(5 * s)) + floor(1 * s)
+            g.rect_filled(xl, my, rw, mph, theme.pack(0, 0, 0, 0.5), 0)
             local mfw = floor(rw * max(0, min(1, (m.mp or 0) / m.mpmax)))
-            if mfw > 0 then g.rect_filled(xl, my, mfw, mh, A(pal.mp, 0.95 * dim), 0) end
+            if mfw > 0 then g.rect_filled(xl, my, mfw, mph, A(pal.mp, f.cfg.opacity_mp * dim), 0) end
         end
     end
 
-    draw_icon_strip(f, m, xl, limit, r.y + r.h - icon_band(f) - floor(2 * s), dim)
     cell_interact(f, m, r)
 end
 
@@ -1008,7 +1073,7 @@ end
 -- Triage: the neediest member in one panel, cure buttons sized to the gap, everyone else in a list
 -- ------------------------------------------------------------------------------------------
 
-local function draw_tile(f, x, y, w, h, def, member, best, potency)
+local function draw_tile(f, x, y, w, h, def, member, best, potency, note)
     local g, pal, s = f.gfx, f.pal, f.geom.scale
     local state, detail = spellstate.evaluate(def, member, f.player, f.cfg)
     local ready = (state == 'ready')
@@ -1025,8 +1090,11 @@ local function draw_tile(f, x, y, w, h, def, member, best, potency)
     local sub
     if state == 'recast' then sub = ui.fmt_recast(detail)
     elseif state == 'nomp' then sub = 'no MP'
+    elseif note then sub = note
+    elseif not potency then sub = def.kind == 'curaga' and 'area' or (def.mp and (def.mp .. ' MP') or '')
     else sub = string.format('+%d', potency or 0) end
-    g.text(x + floor(5 * s), y + h - th - floor(4 * s), (state == 'nomp') and pal.mp or A(pal.text_dim, 0.95), fit(g, sub, w - floor(8 * s)))
+    local subcol = (state == 'nomp') and pal.mp or (note and state == 'ready') and pal.warn or A(pal.text_dim, 0.95)
+    g.text(x + floor(5 * s), y + h - th - floor(4 * s), subcol, fit(g, sub, w - floor(8 * s)))
     if best and (ready or busy) then outline(g, x, y, w, h, max(1, floor(1.5 * s)), A(pal.accent, 0.9)) end
     if f.player and f.player.queued == def.key then outline(g, x, y, w, h, max(1, floor(2 * s)), A(pal.accent, 0.9)) end
     note_hitbox(f, 'spell', x, y, w, h, { slot = member.slot, key = def.key })
@@ -1036,7 +1104,7 @@ local function draw_tile(f, x, y, w, h, def, member, best, potency)
             string.format('%s   (%d MP)', def.name, def.mp or 0),
             'Target: ' .. member.name,
             'Status: ' .. spellstate.describe(state, detail),
-            'Roughly +' .. (potency or 0) .. ' HP (estimate)',
+            note and ((note == 'buff') and 'Buff you can add' or ('Removes ' .. note)) or (potency and ('Roughly +' .. potency .. ' HP (estimate)') or ''),
         }
         local btn = click_button(f)
         if btn then
@@ -1064,8 +1132,9 @@ local function draw_triage(f)
         for _, m in pairs(f.roster or {}) do rl[#rl + 1] = m end
     end
     if not gs and f.groups then gs = {}; for _, gi in ipairs(f.groups) do gs[gi] = true end end
-    local list = triage.order(rl, f.cfg, gs)
-    local feat = triage.pick(list, f.cfg, ui.state.tri_slot)
+    local can = triage.cleanse_set(f.cfg, f.preset, f.player)
+    local list, tiers = triage.order(rl, f.cfg, gs, can)
+    local feat = triage.pick(list, f.cfg, ui.state.tri_slot, tiers)
     ui.state.tri_slot = feat and feat.slot or nil
 
     local M = T.main
@@ -1079,8 +1148,9 @@ local function draw_triage(f)
     local out_of_range, near_limit, dim = member_flags(f, feat)
     local def_hp = triage.deficit(feat)
     local frac = max(0, min(1, (feat.hpp or 0) / 100))
-    local keys = triage.cure_keys(f.cfg, f.preset, f.player)
-    local best_key = triage.best(keys, def_hp)
+    local tier = tiers[feat.slot] or 0
+    local tiles, best_key = triage.tiles(feat, f.cfg, f.preset, f.player, tier, (f.cfg.triage_opts and f.cfg.triage_opts.tiles) or 4)
+    local fix = triage.fixable(feat, can)
     local jr, jg, jb = jobs.hue(feat.job)
     local x0, x1 = mx + M.pad, mx + M.w - M.pad
     if def_hp > 0 and triage.eligible(feat, f.cfg) then
@@ -1100,6 +1170,7 @@ local function draw_triage(f)
     g.text(nx + nw + floor(6 * s), hy + floor((M.head_h - th) / 2), A(pal.text_dim, 0.85), jobs.abbr(feat.job))
     local right_txt, right_col
     if feat.dead then right_txt, right_col = 'KO', pal.bad
+    elseif tier == 3 and fix[1] then right_txt, right_col = debuffs.info[fix[1].key].label, pal.bad
     elseif def_hp > 0 then right_txt, right_col = '-' .. def_hp, theme.hp_color(pal, frac)
     else right_txt, right_col = 'ALL FULL', pal.good end
     local rw_, rh_ = g.text_size_scaled(right_txt, 1.2)
@@ -1113,7 +1184,7 @@ local function draw_triage(f)
         local fc = theme.hp_fill(pal, frac, { jr, jg, jb })
         if out_of_range then fc = theme.mix(fc, theme.pack(0.42, 0.42, 0.45, 1), 0.85) end
         local fw = floor(bw * frac)
-        if fw > 0 then g.rect_filled(x0, by, fw, M.bar_h, A(fc, 0.96), floor(2 * s)) end
+        if fw > 0 then g.rect_filled(x0, by, fw, M.bar_h, A(fc, f.cfg.opacity_hp), floor(2 * s)) end
         local pot = best_key and triage.POTENCY[best_key] or 0
         if pot > 0 and feat.hpmax and feat.hpmax > 0 and def_hp > 0 then
             local pw = floor(bw * min(1 - frac, pot / feat.hpmax))
@@ -1128,17 +1199,18 @@ local function draw_triage(f)
     local iy = by + M.bar_h + M.gap
     draw_icon_strip(f, feat, x0, x1, iy, dim)
     local ty = iy + M.icon_h + M.gap
-    local n = min(4, #keys)
+    local n = #tiles
     if n == 0 then
-        g.text(x0, ty + floor((M.tile_h - th) / 2), A(pal.text_dim, 0.8), 'No single-target cures learned')
+        g.text(x0, ty + floor((M.tile_h - th) / 2), A(pal.text_dim, 0.8), 'No cures learned')
     else
-        -- the n strongest cures you have, weakest first
-        local first = #keys - n + 1
         local tgap = floor(4 * s)
         local tw = floor((bw - (n - 1) * tgap) / n)
-        for i = 1, n do
-            local key = keys[first + i - 1]
-            draw_tile(f, x0 + (i - 1) * (tw + tgap), ty, tw, M.tile_h, spells.defs[key], feat, key == best_key, triage.POTENCY[key])
+        for i, tl in ipairs(tiles) do
+            local note
+            if tl.kind == 'cleanse' and tl.debuff then note = debuffs.info[tl.debuff].label
+            elseif tl.kind == 'buff' then note = 'buff' end
+            draw_tile(f, x0 + (i - 1) * (tw + tgap), ty, tw, M.tile_h, spells.defs[tl.key], feat, tl.key == best_key,
+                triage.POTENCY[tl.key], note)
         end
     end
 
@@ -1174,7 +1246,7 @@ local function draw_triage(f)
                 if not m.dead and not m.zone_diff and mf > 0 then
                     local fc = theme.hp_fill(pal, mf, { mjr, mjg, mjb })
                     if oor then fc = theme.mix(fc, theme.pack(0.42, 0.42, 0.45, 1), 0.85) end
-                    g.rect_filled(bx, byy, max(1, floor(bw2 * mf)), bh, A(fc, d2), 0)
+                    g.rect_filled(bx, byy, max(1, floor(bw2 * mf)), bh, A(fc, f.cfg.opacity_hp * d2), 0)
                 end
             end
             local nd = (not m.dead) and #sorted_debuffs(m) or 0
@@ -1221,13 +1293,16 @@ function ui.draw_roster(f)
     local th = select(2, g.text_size('Ag'))
 
     -- Panel background + slim header strip.
-    g.rect_filled(ox, oy, geom.width, geom.height, theme.alpha(pal.bg, f.cfg.opacity * 0.80), floor(5 * s))
-    g.rect_filled(ox, oy, geom.width, geom.header_h, theme.alpha(pal.card_hot, f.cfg.opacity * 0.55), floor(5 * s))
-    g.text(ox + floor(6 * s), oy + floor((geom.header_h - th) / 2), A(pal.text_dim, 0.9), 'CLICKHEAL')
+    g.rect_filled(ox, oy, geom.width, geom.height, theme.alpha(pal.bg, f.cfg.opacity_panel), floor(5 * s))
+    local has_header = geom.header_h > 0
+    if has_header then
+        g.rect_filled(ox, oy, geom.width, geom.header_h, theme.alpha(pal.card_hot, f.cfg.opacity_panel * 0.75), floor(5 * s))
+        g.text(ox + floor(6 * s), oy + floor((geom.header_h - th) / 2), A(pal.text_dim, 0.9), 'CLICKHEAL')
+    end
 
     -- Heal / Buff mode switch (only for jobs that have buff spells).
     local chip_w = 0
-    if f.preset.buffs and #f.preset.buffs > 0 and not geom.bar and not f.cfg.flyout then
+    if has_header and f.preset.buffs and #f.preset.buffs > 0 and not geom.bar and not f.cfg.flyout then
         local label = f.cfg.buff_mode and 'BUFF' or 'HEAL'
         local cx = ox + g.text_size('CLICKHEAL') + floor(14 * s)
         local ch_h = geom.header_h - 2
@@ -1251,7 +1326,7 @@ function ui.draw_roster(f)
 
     -- Header buttons (work whether the panel is locked or not): MOVE/LOCK and CFG, right-aligned.
     local buttons_w = 0
-    do
+    if has_header then
         local i = f.input
         local function header_button(right_x, label, tip, event)
             local bw = g.text_size(label) + floor(10 * s)
@@ -1286,7 +1361,7 @@ function ui.draw_roster(f)
         candidates = { 'DEMO DATA', 'DEMO' }
         tag_col = A(pal.text_dim, 0.7)
     end
-    if candidates then
+    if candidates and has_header then
         local title_w = g.text_size('CLICKHEAL') + floor(6 * s) + chip_w
         local room = geom.width - title_w - floor(18 * s) - buttons_w
         for _, tag in ipairs(candidates) do

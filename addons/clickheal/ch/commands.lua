@@ -20,36 +20,20 @@ local HELP = {
     '/ch mode <party|alliance1|alliance2>   (or 6 / 12 / 18)',
     '/ch orient <columns|stacked|rows>',
     '/ch demo [on|off]        demo data (off = your real party)',
-    '/ch slant <0-16>         strip rows: 0 = square (default), higher = leaning edge',
     '/ch buttons <24-64> [2-16]  flyout button size (and spacing)',
     '/ch status               show the switches that decide what hover and clicks do',
     '/ch cast [on|off]        a click really casts the spell (off = only logs). Needs demo off.',
-    '/ch queue [on|off]       hold a click made mid-cast and send it when you can act',
-    '/ch fastcast <0-80>      Fast Cast %, shortens the estimated cast time',
-    '/ch lockout <0.3-3>      seconds of delay after each cast or ability',
     '/ch alerts [on|off]      priority alert bar',
-    '/ch colors <modern|job|mono|colorblind>',
-    '/ch skin <solid|hairline>  row style',
-    '/ch triage [on|off]      neediest-first panel with best-fit cures',
-    '/ch mp pct [on|off]      MP percent beside the HP percent',
-    '/ch mp height <2-14>     MP bar thickness',
-    '/ch mp size <0.5-1>      MP percent text size',
-    '/ch jobicons [on|off]    job pictograms instead of the three letters',
-    '/ch rowsize <w> <h>      member row width and height (160-360, 30-72)',
-    '/ch icons <debuff> [buff]  status icon sizes (10-32)',
-    '/ch buffbar [on|off]     buff icon bar on each row',
-    '/ch mybuffs [on|off]     buff bar: only buffs your job can cast',
     '/ch buffmode [heal|buff] spell row shows heals or buffs (no argument = switch)',
     '/ch flyout [on|off]      hover a member (Grid / Strip) to open their spell flyout',
     '/ch order <heal|cleanse|buff|raise|ability> <spell keys...>   spell order, same for every member;  /ch order <group> reset',
     '/ch bar [on|off]         shared spell bar under the Grid / Strip cells (pick a spell, then click a member)',
     '/ch tab <heal|cleanse|buff|raise>   which spells the bar shows',
     '/ch cellbinds [on|off]   Grid / Strip: plain clicks on a cell cast the bound spell too',
-    '/ch bind <click> <spell|cleanse|none>   grid/strip click casting, e.g. /ch bind shift+rmb cure1',
-    '/ch binds                list the current click bindings;  /ch bind reset  clears your changes',
     '/ch reset confirm        restore every setting to defaults',
     '/ch apicheck             check which Ashita/ImGui calls this install supports',
     '/ch partydump            print the raw party status-icon data (for debuff icon support)',
+    '/ch cursor [on|off]     draw a crosshair at the mouse position ImGui sees (for debugging offset clicks)',
     '/ch inputdebug [on|off]  log where each mouse click lands (for debugging clicks)',
 }
 
@@ -142,15 +126,6 @@ function commands.run(args, s)
         s.demo = onoff(a3, s.demo); out.changed = true
         say('Demo data: ' .. (s.demo and 'on' or 'off'))
 
-    elseif cmd == 'slant' then
-        local n = tonumber(a3)
-        if not n then
-            say('Usage: /ch slant <0-16>   (now ' .. s.slant .. '; 0 = square rows)')
-        else
-            s.slant = n; chconfig.sanitize(s); out.changed = true
-            say('Row slant: ' .. s.slant)
-        end
-
     elseif cmd == 'buttons' then
         local size, gap = tonumber(a3), tonumber(args[4])
         if not size then
@@ -160,81 +135,6 @@ function commands.run(args, s)
             if gap then s.fly_gap = gap end
             chconfig.sanitize(s); out.changed = true
             say('Flyout buttons: size ' .. s.fly_btn .. ', spacing ' .. s.fly_gap)
-        end
-
-    elseif cmd == 'rowsize' then
-        local w, h = tonumber(a3), tonumber(args[4])
-        if not w or not h then
-            say('Usage: /ch rowsize <width 160-360> <height 30-72>   (now ' .. s.row_w .. ' x ' .. s.row_h .. ')')
-        else
-            s.row_w, s.row_h = w, h
-            chconfig.sanitize(s); out.changed = true
-            say('Row size: ' .. s.row_w .. ' x ' .. s.row_h)
-        end
-
-    elseif cmd == 'skin' then
-        local v = (a3 or ''):lower()
-        if v == 'solid' or v == 'hairline' then
-            s.skin = v; out.changed = true
-            say('Row style: ' .. v)
-        else
-            say('Usage: /ch skin <solid|hairline>   (now ' .. s.skin .. ')')
-        end
-
-    elseif cmd == 'triage' then
-        s.triage = onoff(a3, s.triage); out.changed = true
-        say('Triage view: ' .. (s.triage and 'on' or 'off'))
-
-    elseif cmd == 'mp' then
-        local sub = (a3 or ''):lower()
-        if sub == 'pct' then
-            s.show_mp_pct = onoff(args[4] and args[4]:lower(), s.show_mp_pct); out.changed = true
-            say('MP percent: ' .. (s.show_mp_pct and 'on' or 'off'))
-        elseif sub == 'size' and tonumber(args[4]) then
-            s.mp_pct_scale = tonumber(args[4]); chconfig.sanitize(s); out.changed = true
-            say(string.format('MP percent size: %.2f', s.mp_pct_scale))
-        elseif sub == 'height' and tonumber(args[4]) then
-            s.mp_height = tonumber(args[4]); chconfig.sanitize(s); out.changed = true
-            say('MP bar thickness: ' .. s.mp_height)
-        else
-            say('Usage: /ch mp pct [on|off]   or   /ch mp height <2-14>   (now ' .. (s.show_mp_pct and 'pct on' or 'pct off') .. ', height ' .. s.mp_height .. ')')
-        end
-
-    elseif cmd == 'icons' then
-        local d, b = tonumber(a3), tonumber(args[4])
-        if not d then
-            say('Usage: /ch icons <debuff 10-32> [buff 10-32]   (now ' .. s.debuff_icon .. ' / ' .. s.buff_icon .. ')')
-        else
-            s.debuff_icon = d
-            if b then s.buff_icon = b end
-            chconfig.sanitize(s); out.changed = true
-            say('Icon sizes: debuff ' .. s.debuff_icon .. ', buff ' .. s.buff_icon)
-        end
-
-    elseif cmd == 'jobicons' then
-        s.job_icon = onoff(a3, s.job_icon); out.changed = true
-        say('Job icons: ' .. (s.job_icon and 'on' or 'off'))
-
-    elseif cmd == 'queue' then
-        s.queue_clicks = onoff(a3, s.queue_clicks); out.changed = true
-        say('Click queue: ' .. (s.queue_clicks and 'on' or 'off'))
-
-    elseif cmd == 'fastcast' then
-        local n = tonumber(a3)
-        if not n then
-            say('Usage: /ch fastcast <0-80>   (now ' .. s.fast_cast .. '%)')
-        else
-            s.fast_cast = n; chconfig.sanitize(s); out.changed = true
-            say('Fast Cast: ' .. s.fast_cast .. '%')
-        end
-
-    elseif cmd == 'lockout' then
-        local n = tonumber(a3)
-        if not n then
-            say(string.format('Usage: /ch lockout <0.3-3>   (now %.1fs)', s.cast_lockout))
-        else
-            s.cast_lockout = n; chconfig.sanitize(s); out.changed = true
-            say(string.format('Delay after each action: %.1fs', s.cast_lockout))
         end
 
     elseif cmd == 'cast' then
@@ -251,20 +151,6 @@ function commands.run(args, s)
         s.alerts.enabled = onoff(a3, s.alerts.enabled); out.changed = true
         say('Alert bar: ' .. (s.alerts.enabled and 'on' or 'off'))
 
-    elseif cmd == 'colors' or cmd == 'colours' then
-        local v = lower(a3)
-        if v and in_list(chconfig.enums.colors, v) then
-            s.colors = v; out.changed = true; say('Colors: ' .. v)
-        else
-            say('Usage: /ch colors <modern|job|mono|colorblind>')
-        end
-
-    elseif cmd == 'buffbar' then
-        s.show_buff_bar = onoff(a3, s.show_buff_bar); out.changed = true
-        say('Buff icon bar: ' .. (s.show_buff_bar and 'on' or 'off'))
-    elseif cmd == 'mybuffs' then
-        s.buffs_mine_only = onoff(a3, s.buffs_mine_only); out.changed = true
-        say('Buff bar shows: ' .. (s.buffs_mine_only and 'only buffs your job casts' or 'all known buffs'))
     elseif cmd == 'buffmode' then
         local v = lower(a3)
         if v == 'buff' or v == 'buffs' then s.buff_mode = true
@@ -314,27 +200,12 @@ function commands.run(args, s)
         s.cell_binds = onoff(a3, s.cell_binds); out.changed = true
         say('Cell click bindings: ' .. (s.cell_binds and 'on' or 'off'))
 
-    elseif cmd == 'binds' then
-        out.show_binds = true
-
-    elseif cmd == 'bind' then
-        if lower(a3) == 'reset' then
-            s.bindings = {}; out.changed = true; say('Click bindings reset to the job defaults.')
-        else
-            local slot = bindings.parse_slot(a3)
-            local val = args[4] and tostring(args[4]):lower() or nil
-            if val == 'none' or val == 'off' or val == '-' then val = '-' end
-            if not slot or not val or not bindings.valid_value(val) then
-                say('Usage: /ch bind <lmb|rmb|mmb|shift+lmb|ctrl+rmb|alt+lmb ...> <spell key|cleanse|none>   e.g. /ch bind lmb cure4')
-            else
-                s.bindings[slot] = val; out.changed = true
-                say(string.format('%s -> %s', bindings.SHORT[slot], val))
-            end
-        end
-
     elseif cmd == 'inputdebug' then
         out.input_debug = (args[3] ~= 'off')
         say('Input debug ' .. (out.input_debug and 'on: click things and read the [input] lines.' or 'off.'))
+    elseif cmd == 'cursor' then
+        out.cursor = (args[3] ~= 'off')
+        say('Cursor test ' .. (out.cursor and 'on: a crosshair is drawn where ImGui thinks the mouse is. /ch cursor off to stop.' or 'off.'))
     elseif cmd == 'partydump' then
         out.party_dump = true
     elseif cmd == 'apicheck' then

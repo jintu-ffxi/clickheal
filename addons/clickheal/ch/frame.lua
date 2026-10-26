@@ -31,11 +31,12 @@ function frame.build(cfg, source, t, disp_w, disp_h, dismissed)
         orientation = cfg.orientation,
         auto_scale = cfg.auto_scale, scale = cfg.scale, groups = groups,
         spellbar = cfg.spellbar,
-        row_w = cfg.row_w, row_h = cfg.row_h, debuff_icon = cfg.debuff_icon, buff_icon = cfg.buff_icon,
+        row_w = cfg.row_w, row_h = (cfg.skin == 'hairline') and cfg.hl_row_h or cfg.row_h, debuff_icon = cfg.debuff_icon, buff_icon = cfg.buff_icon,
         mp_h = cfg.show_mp and cfg.mp_height or 0,
         mp_pct = (cfg.show_mp and cfg.show_mp_pct) and cfg.mp_pct_scale or nil,
     }
-    lopts.skin, lopts.triage = cfg.skin, cfg.triage
+    lopts.skin, lopts.triage, lopts.hl_pct, lopts.name_scale = cfg.skin, cfg.triage, cfg.hl_pct, cfg.name_scale
+    lopts.header = cfg.show_header or not cfg.locked   -- unlocking always brings the bar back so you can move and lock
     if cfg.triage then
         local shown, n = {}, 0
         for _, gi in ipairs(groups) do shown[gi] = true end

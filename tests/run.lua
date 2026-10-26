@@ -364,7 +364,7 @@ test('commands: parsing', function()
     commands.run({ '/ch', 'demo', 'off' }, s); eq(s.demo, false)
     commands.run({ '/ch', 'demo' }, s); eq(s.demo, true, 'no argument toggles')
     commands.run({ '/ch', 'alerts', 'off' }, s); eq(s.alerts.enabled, false)
-    commands.run({ '/ch', 'colors', 'colorblind' }, s); eq(s.colors, 'colorblind')
+    s.colors = 'colorblind'; chconfig.sanitize(s); eq(s.colors, 'colorblind')
     local unk = commands.run({ '/ch', 'frobnicate' }, s); truthy(unk.messages[1]:find('Unknown'))
     truthy(#commands.run({ '/ch', 'help' }, s).messages >= 8)
 end)
@@ -720,15 +720,6 @@ test('ui: grid and strip text stays inside its cell at 1080p and 4K', function()
     end
 end)
 
-test('commands: bind, unbind via none, reset, binds', function()
-    local s = new_cfg({})
-    commands.run({ '/ch', 'bind', 'shift+rmb', 'cure1' }, s); eq(s.bindings.shift_right, 'cure1')
-    commands.run({ '/ch', 'bind', 'lmb', 'none' }, s); eq(s.bindings.left, '-')
-    local r = commands.run({ '/ch', 'bind', 'lmb', 'cure99' }, s); eq(s.bindings.left, '-', 'bad spell ignored'); truthy(#r.messages > 0)
-    commands.run({ '/ch', 'bind', 'xyz', 'cure1' }, s); eq(s.bindings.xyz, nil)
-    eq(commands.run({ '/ch', 'binds' }, s).show_binds, true)
-    commands.run({ '/ch', 'bind', 'reset' }, s); eq(next(s.bindings), nil)
-end)
 
 test('actions: a note event is logged', function()
     local logged
@@ -1014,23 +1005,6 @@ test('flyout: priority outline on the cure the member needs (Torvald: Cursna)', 
     truthy(hit, 'outlined')
 end)
 
-test('strip (slant 8): rows are slanted quads, bars stay inside the card, no timer on the chips', function()
-    local cfg = new_cfg({ style = 'strip', mode = 'alliance2', demo_alliance_debuffs = true, slant = 8 })
-    local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
-    ui.draw_roster(f)
-    local quads = 0
-    for _, c in ipairs(g.cmds) do if c.op == 'quad' then quads = quads + 1 end end
-    truthy(quads >= 15, 'a slanted background per member, got ' .. quads)
-    for _, c in ipairs(g.cmds) do
-        if c.op == 'rect' and c.y > fr.geom.header_h + fr.geom.label_h then
-            local inside = false
-            for _, card in pairs(fr.geom.cards) do
-                if c.x >= card.x - 1 and c.x + c.w <= card.x + card.w + 1 and c.y >= card.y - 3 and c.y + c.h <= card.y + card.h + 3 then inside = true end
-            end
-            truthy(inside, string.format('rect %.0f,%.0f %.0fx%.0f outside every card', c.x, c.y, c.w, c.h))
-        end
-    end
-end)
 
 test('spell order: custom order applies to the flyout for every member; bad keys are dropped', function()
     local cfg = new_cfg({ style = 'strip', mode = 'party', spell_order = { heal = { 'cure1', 'nope', 'curaga2', 'cure1' }, bogus = { 'cure1' } } })
@@ -1281,33 +1255,14 @@ test('strip: the whole row is the HP bar and its color goes green -> yellow -> o
     local pal = theme.get('modern')
     truthy(theme.hp_fill(pal, 0.9) ~= theme.hp_fill(pal, 0.45) and theme.hp_fill(pal, 0.45) ~= theme.hp_fill(pal, 0.1))
 
-    -- A 50% member gets a filled quad about half as wide as a 100% one.
-    local function fill_width(hpp)
-        local cfg = new_cfg({ style = 'strip', mode = 'party', slant = 8 })
-        local f, _, g = build_ui_frame(cfg, 1080, 3.0, nil, true)
-        f.roster[1].hpp = hpp
-        g.clear()
-        ui.draw_roster(f)
-        local best = 0
-        for _, c in ipairs(g.cmds) do
-            if c.op == 'quad' and c.t == 0 then
-                local w = c.p[3] - c.p[7]   -- bottom right x minus bottom left x
-                best = math.max(best, w)
-            end
-        end
-        return best
-    end
-    truthy(fill_width(100) > 0)
 end)
 
-test('strip: square rows by default (no quads), slant is optional', function()
+test('strip: rows are square (no quads)', function()
     local cfg = new_cfg({ style = 'strip', mode = 'party' })
-    eq(cfg.slant, 0)
+    eq(cfg.slant, nil)
     local f, _, g = build_ui_frame(cfg, 1080, 3.0, nil, true)
     ui.draw_roster(f)
     for _, c in ipairs(g.cmds) do truthy(c.op ~= 'quad', 'no slanted shapes at slant 0') end
-    local c2 = new_cfg({}); commands.run({ '/ch', 'slant', '6' }, c2); eq(c2.slant, 6)
-    commands.run({ '/ch', 'slant', '99' }, c2); eq(c2.slant, 16)
 end)
 
 test('window controls: header MOVE/LOCK and CFG buttons, and a drag-to-resize corner', function()
@@ -1421,31 +1376,38 @@ test('layout: strip footprint at 1080p, doubled at 4K, rows never overlap in any
     end
 end)
 
-test('layout: row width, row height and icon sizes come from the settings, and the row stays tall enough for its icons', function()
+test('layout: row width and row height come from the settings; icons shrink or hide to fit', function()
     local g = layout.compute({ orientation = 'columns', groups = { 0 }, row_w = 300, row_h = 60 }, 1080)
     eq(g.card_w, 300); eq(g.card_h, 60)
-    local tall = layout.compute({ orientation = 'columns', groups = { 0 }, row_h = 30, debuff_icon = 32, buff_icon = 20 }, 1080)
-    eq(tall.card_h, 22 + 32, 'a 32px icon strip pushes a 30px row up')
+    local tight = layout.compute({ orientation = 'columns', groups = { 0 }, row_h = 36, debuff_icon = 32, buff_icon = 20 }, 1080)
+    eq(tight.card_h, 36, 'the row keeps the height you chose')
+    truthy(tight.eff.debuff_icon < 32 and tight.eff.debuff_icon >= 9, 'icons shrink to fit')
+    truthy(tight.eff.buff_icon < tight.eff.debuff_icon, 'in proportion')
+    local tiny = layout.compute({ orientation = 'columns', groups = { 0 }, row_h = 26, debuff_icon = 14, buff_icon = 14 }, 1080)
+    eq(tiny.card_h, 26); eq(tiny.eff.debuff_icon, 0, 'icons hide when there is no room')
+    local roomy = layout.compute({ orientation = 'columns', groups = { 0 }, row_h = 60, debuff_icon = 14, buff_icon = 14 }, 1080)
+    eq(roomy.eff.debuff_icon, 14)
+    local hl_small = layout.compute({ skin = 'hairline', hl_pct = 2.5, row_h = 32, debuff_icon = 14, buff_icon = 14 }, 1080)
+    local hl_big = layout.compute({ skin = 'hairline', hl_pct = 2.5, row_h = 70, debuff_icon = 14, buff_icon = 14 }, 1080)
+    truthy(hl_small.eff.hl_pct < hl_big.eff.hl_pct, 'the big percentage shrinks in a short row')
+    eq(hl_small.card_h, 32); eq(hl_big.eff.hl_pct, 2.5)
     local g2 = layout.compute({ orientation = 'columns', groups = { 0 }, row_w = 300, row_h = 60 }, 2160)
     eq(g2.card_w, 600); eq(g2.card_h, 120)
 end)
 
 test('chconfig: row and icon sizes are clamped and the layout settings are gone', function()
     local s = chconfig.sanitize({ row_w = 9999, row_h = 1, debuff_icon = 'x', buff_icon = 99, show_buff_bar = 'yes' })
-    eq(s.row_w, 360); eq(s.row_h, 30); eq(s.debuff_icon, chconfig.defaults.debuff_icon); eq(s.buff_icon, 32)
+    eq(s.row_w, 360); eq(s.row_h, 24); eq(s.debuff_icon, chconfig.defaults.debuff_icon); eq(s.buff_icon, 32)
     eq(s.show_buff_bar, true)
     eq(chconfig.defaults.style, nil); eq(chconfig.defaults.show_job, nil); eq(chconfig.defaults.job_style, nil)
 end)
 
 test('commands: rowsize, icons, buffbar, mybuffs, buffmode', function()
     local s = new_cfg({})
-    commands.run({ '/ch', 'rowsize', '300', '56' }, s); eq(s.row_w, 300); eq(s.row_h, 56)
-    commands.run({ '/ch', 'rowsize', '9999', '1' }, s); eq(s.row_w, 360); eq(s.row_h, 30)
-    local bad = commands.run({ '/ch', 'rowsize', 'x' }, s); truthy(bad.messages[1]:find('Usage'))
-    commands.run({ '/ch', 'icons', '20', '16' }, s); eq(s.debuff_icon, 20); eq(s.buff_icon, 16)
-    commands.run({ '/ch', 'icons', '12' }, s); eq(s.debuff_icon, 12); eq(s.buff_icon, 16)
-    commands.run({ '/ch', 'buffbar', 'off' }, s); eq(s.show_buff_bar, false)
-    commands.run({ '/ch', 'mybuffs', 'off' }, s); eq(s.buffs_mine_only, false)
+    s.row_w, s.row_h = 300, 56; chconfig.sanitize(s); eq(s.row_w, 300); eq(s.row_h, 56)
+    s.row_w, s.row_h = 9999, 1; chconfig.sanitize(s); eq(s.row_w, 360); eq(s.row_h, 24)
+    s.debuff_icon, s.buff_icon = 20, 16; chconfig.sanitize(s); eq(s.debuff_icon, 20); eq(s.buff_icon, 16)
+    s.debuff_icon = 99; chconfig.sanitize(s); eq(s.debuff_icon, 32)
     commands.run({ '/ch', 'buffmode', 'buff' }, s); eq(s.buff_mode, true)
     commands.run({ '/ch', 'buffmode' }, s); eq(s.buff_mode, false, 'no arg toggles')
     truthy(commands.run({ '/ch', 'layout', 'full' }, s).messages[1]:find('Unknown'), 'layouts are gone')
@@ -1659,10 +1621,6 @@ test('chconfig/commands: queue, fast cast and delay settings', function()
     local s = chconfig.sanitize({ fast_cast = 500, cast_lockout = 0.01, queue_clicks = false })
     eq(s.fast_cast, 80); near(s.cast_lockout, 0.3, 1e-9); eq(s.queue_clicks, false)
     local c = new_cfg({})
-    commands.run({ '/ch', 'queue', 'off' }, c); eq(c.queue_clicks, false)
-    commands.run({ '/ch', 'fastcast', '25' }, c); eq(c.fast_cast, 25)
-    commands.run({ '/ch', 'lockout', '1.5' }, c); near(c.cast_lockout, 1.5, 1e-9)
-    truthy(commands.run({ '/ch', 'fastcast', 'x' }, c).messages[1]:find('Usage'))
 end)
 
 test('commands: /ch status reports the switches and explains why the hover would be off', function()
@@ -1678,7 +1636,6 @@ end)
 -- =============================================================================================
 -- job colors palette and job icons
 -- =============================================================================================
-local jobicons = require('ch.jobicons')
 
 test('theme: the job palette tints the healthy HP fill with the job color and keeps the warning colors', function()
     local pal = theme.get('job')
@@ -1713,34 +1670,6 @@ test('ui: job colors give each row its own healthy color', function()
     truthy(differ, 'the job palette paints fills the modern palette does not')
 end)
 
-test('jobicons: every job has a pictogram that stays inside its box; the icon replaces the letters when switched on', function()
-    for id = 1, 22 do
-        truthy(jobicons.has(id), 'glyph for job ' .. id)
-        for _, sh in ipairs(jobicons.glyphs[id]) do
-            local pts = {}
-            if sh[1] == 'r' then
-                pts = { { sh[2], sh[3] }, { sh[2] + sh[4], sh[3] + sh[5] } }
-            else
-                for i = 2, 8, 2 do pts[#pts + 1] = { sh[i], sh[i + 1] } end
-            end
-            for _, p in ipairs(pts) do truthy(p[1] >= -0.001 and p[1] <= 1.001 and p[2] >= -0.001 and p[2] <= 1.001, 'job ' .. id .. ' shape leaves the box') end
-        end
-        local g = gfx_rec.new(1)
-        truthy(jobicons.draw(g, id, 0, 0, 24, 0xffffffff)); truthy(#g.cmds >= 1)
-    end
-    eq(jobicons.has(99), false)
-    local function letters(on)
-        local cfg = new_cfg({ mode = 'party', job_icon = on })
-        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
-        ui.draw_roster(f)
-        local n = 0
-        for _, c in ipairs(g.cmds) do if c.op == 'text' and (c.s == 'WHM' or c.s == 'PLD' or c.s == 'BLM') then n = n + 1 end end
-        return n
-    end
-    eq(letters(false), 3); eq(letters(true), 0)
-    local s = new_cfg({}); commands.run({ '/ch', 'jobicons', 'on' }, s); eq(s.job_icon, true)
-    commands.run({ '/ch', 'colors', 'job' }, s); eq(s.colors, 'job')
-end)
 
 test('game source: other members\' buffs and debuffs come from the party status data; a trust with none shows no data', function()
     local game = require('ch.source_game')
@@ -1834,16 +1763,15 @@ test('mp: percent text and bar thickness are options; a thick bar makes the row 
     truthy(pct_texts(g1) > pct_texts(g0), 'MP percent adds text')
     local _, g2 = run_with({ mode = 'party', show_mp = false, show_mp_pct = true })
     eq(pct_texts(g2), pct_texts(g0), 'no MP bar, no MP percent')
-    local a = layout.compute({ row_h = 30, debuff_icon = 14, buff_icon = 14, mp_h = 3 }, 1080)
-    local b = layout.compute({ row_h = 30, debuff_icon = 14, buff_icon = 14, mp_h = 12 }, 1080)
-    truthy(b.card_h > a.card_h, 'thicker MP bar needs a taller row')
+    local a = layout.compute({ row_h = 40, debuff_icon = 14, buff_icon = 14, mp_h = 3 }, 1080)
+    local b = layout.compute({ row_h = 40, debuff_icon = 14, buff_icon = 14, mp_h = 12 }, 1080)
+    eq(a.card_h, b.card_h, 'the row height stays what you chose')
+    truthy(b.eff.debuff_icon < a.eff.debuff_icon, 'a thicker MP bar takes room from the icons')
     eq(chconfig.sanitize({ mp_height = 99 }).mp_height, 14); eq(chconfig.sanitize({ mp_height = 0 }).mp_height, 2)
-    local s = new_cfg({}); commands.run({ '/ch', 'mp', 'pct', 'on' }, s); eq(s.show_mp_pct, true)
-    commands.run({ '/ch', 'mp', 'height', '9' }, s); eq(s.mp_height, 9)
 end)
 
 
-test('mp percent: sits under the HP percent, smaller, right-aligned, and the row grows to fit', function()
+test('mp percent: sits under the HP percent, smaller, right-aligned', function()
     local cfg = new_cfg({ mode = 'party', show_mp_pct = true, mp_pct_scale = 0.6 })
     local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
     ui.draw_roster(f)
@@ -1856,9 +1784,6 @@ test('mp percent: sits under the HP percent, smaller, right-aligned, and the row
     truthy(hp and mp, 'both percents drawn')
     truthy(mp.y > hp.y, 'MP percent is below HP percent')
     eq(mp.k, 0.6)
-    local a = layout.compute({ row_h = 42, debuff_icon = 14, buff_icon = 14 }, 1080)
-    local b = layout.compute({ row_h = 42, debuff_icon = 14, buff_icon = 14, mp_pct = 1.0 }, 1080)
-    truthy(b.card_h > a.card_h)
     eq(chconfig.sanitize({ mp_pct_scale = 5 }).mp_pct_scale, 1.0)
 end)
 
@@ -1929,6 +1854,182 @@ test('triage view: panel geometry, featured member, cure tiles cast on the featu
     local small = layout.compute({ triage = true, triage_n = 0, debuff_icon = 14, buff_icon = 14 }, 1080)
     local big = layout.compute({ triage = true, triage_n = 5, debuff_icon = 14, buff_icon = 14 }, 1080)
     truthy(big.height > small.height)
+end)
+
+
+test('opacity: each part has its own transparency setting, sanitized and applied', function()
+    local c = chconfig.sanitize({ opacity_panel = 5, opacity_hp = 0, opacity_mp = -1, opacity_flyout = 0 })
+    eq(c.opacity_panel, 1.0); eq(c.opacity_hp, 0.2); eq(c.opacity_mp, 0.2); eq(c.opacity_flyout, 0.3)
+    local function first_big_rect(over)
+        local cfg = new_cfg(over)
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        for _, cmd in ipairs(g.cmds) do
+            if cmd.op == 'rect' and cmd.w == fr.geom.width and cmd.h == fr.geom.height then return cmd.c end
+        end
+    end
+    local a, b = first_big_rect({ mode = 'party', opacity_panel = 0.2 }), first_big_rect({ mode = 'party', opacity_panel = 1.0 })
+    truthy(a and b and a ~= b, 'panel background changes with its slider')
+end)
+
+test('demo fill: live party plus fake alliance members; clicks on fake members never send', function()
+    local mixed = require('ch.source_mixed')
+    local saved = _G.AshitaCore
+    _G.AshitaCore = nil
+    local list = mixed.roster(3.0, {})
+    _G.AshitaCore = saved
+    truthy(#list >= 6, 'alliance demo members present')
+    for _, m in ipairs(list) do truthy(m.slot >= 6 and m.demo, 'only alliance slots, flagged') end
+    local sent = {}
+    local cfg = new_cfg({ cast = true, demo = false })
+    local ctx = { cfg = cfg, roster_by_slot = { [7] = { slot = 7, name = 'Garrick', demo = true, active = true } },
+        log = function() end, now = 3.0, send = function(c) sent[#sent + 1] = c end, changed = function() end }
+    actions.perform({ type = 'cast', slot = 7, spell = 'cure4', state = 'ready' }, ctx)
+    eq(#sent, 0, 'nothing sent for a demo member')
+    ctx.roster_by_slot[7].demo = nil
+    actions.perform({ type = 'cast', slot = 7, spell = 'cure4', state = 'ready' }, ctx)
+    eq(#sent, 1, 'a real member still casts')
+end)
+
+
+test('triage: a deadly debuff you can remove outranks a lower HP bar; unfixable ones do not', function()
+    local cfg = new_cfg({})
+    local preset = require('ch.spells').preset_for(3, 5)    -- WHM/RDM
+    local can = triage.cleanse_set(cfg, preset, nil)
+    truthy(can.cursna, 'the WHM preset can remove Doom')
+    local function mem(slot, hp, extra)
+        local m = { slot = slot, active = true, name = 'M' .. slot, hp = hp, hpmax = 1000, hpp = hp / 10, dist = 5, debuffs = {} }
+        for k, v in pairs(extra or {}) do m[k] = v end
+        return m
+    end
+    local low, doomed = mem(0, 200), mem(1, 800, { debuffs = { 'doom' } })
+    local list, tiers = triage.order({ low, doomed }, cfg, nil, can)
+    eq(list[1].slot, 1, 'doomed member first'); eq(tiers[1], 3); eq(tiers[0], 2)
+    local asleep = mem(2, 800, { debuffs = { 'sleep' } })          -- nothing you can cast removes sleep
+    local _, t2 = triage.order({ asleep }, cfg, nil, can)
+    eq(t2[2], 0)
+    local cursed = mem(3, 900, { debuffs = { 'curse' } })
+    local _, t3 = triage.order({ cursed }, cfg, nil, can)
+    eq(t3[3], 1)
+    local tiles, best = triage.tiles(doomed, cfg, preset, nil, 3, 4)
+    eq(tiles[1].kind, 'cleanse'); eq(tiles[1].key, 'cursna'); eq(best, 'cursna', 'the fix is the highlighted tile')
+    local tiles2, best2 = triage.tiles(low, cfg, preset, nil, 2, 4)
+    eq(tiles2[1].kind, 'cure'); truthy(best2 and best2:match('^cure'))
+    -- the panel stays on someone it is already showing, unless the other is in a higher tier or clearly worse
+    local list2, tiers2 = triage.order({ low, doomed }, cfg, nil, can)
+    eq(triage.pick(list2, cfg, 0, tiers2).slot, 1, 'higher tier wins over stickiness')
+end)
+
+test('flyout icons: a buff or cleanse button draws the game icon when the option is on, text otherwise', function()
+    local function icons_and_labels(on)
+        local cfg = new_cfg({ mode = 'party', flyout_icons = on })
+        local f0, fr, g0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
+        ui.draw_roster(f0)
+        local hit
+        for _, hb in ipairs(f0.hitboxes) do if hb.kind == 'cell' then hit = hb; break end end
+        ui.reset_state()
+        local f1, _, g1 = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(hit.x + 4, hit.y + 4))
+        g1.has_icons = true
+        ui.draw_roster(f1)
+        local plan = ui.flyout_plan(f1)
+        local f2 = { gfx = g1, geom = f1.geom, cfg = cfg, pal = f1.pal, roster = f1.roster, player = f1.player, preset = f1.preset,
+            now = 3.0, events = {}, input = gfx_rec.input(nil, nil, nil), plan = plan, ox = plan.x, oy = plan.y }
+        g1.cmds = {}
+        ui.draw_flyout(f2)
+        local n = 0
+        for _, c in ipairs(g1.cmds) do if c.op == 'icon' then n = n + 1 end end
+        return n
+    end
+    eq(icons_and_labels(false), 0)
+    truthy(icons_and_labels(true) >= 1, 'status icons on buff/cleanse buttons')
+end)
+
+
+test('triage options: sanitized, debuff levels and switches change priority, spell list leads the tiles', function()
+    local c = chconfig.sanitize({ triage_opts = { tiles = 99, spells = { 'cure4', 'nope', 'cure4', 'haste' },
+        levels = { doom = 'off', curse = 'bogus', silence = 'urgent' }, debuffs = false } })
+    eq(c.triage_opts.tiles, 5); eq(#c.triage_opts.spells, 2); eq(c.triage_opts.levels.doom, 'off')
+    eq(c.triage_opts.levels.curse, nil); eq(c.triage_opts.debuffs, false); eq(c.triage_opts.crit, true)
+    local cfg = new_cfg({})
+    local preset = require('ch.spells').preset_for(3, 5)
+    local can = triage.cleanse_set(cfg, preset, nil)
+    local function mem(slot, hp, extra)
+        local m = { slot = slot, active = true, name = 'M' .. slot, hp = hp, hpmax = 1000, hpp = hp / 10, dist = 5,
+            debuffs = {}, buffs = {}, has_buff_data = true }
+        for k, v in pairs(extra or {}) do m[k] = v end
+        return m
+    end
+    local doomed, low = mem(1, 800, { debuffs = { 'doom' } }), mem(0, 200)
+    local _, tiers = triage.order({ doomed, low }, cfg, nil, can)
+    eq(tiers[1], 3)
+    cfg.triage_opts.levels.doom = 'off'
+    _, tiers = triage.order({ doomed, low }, cfg, nil, can)
+    eq(tiers[1], 0, 'doom ignored when set to off')
+    cfg.triage_opts.levels.doom = 'important'
+    _, tiers = triage.order({ doomed, low }, cfg, nil, can)
+    eq(tiers[1], 1); eq(tiers[0], 2, 'low HP outranks an important debuff')
+    cfg.triage_opts.debuffs = false
+    _, tiers = triage.order({ doomed, low }, cfg, nil, can)
+    eq(tiers[1], 0, 'debuffs switched off')
+    cfg.triage_opts.debuffs = true; cfg.triage_opts.crit = false
+    _, tiers = triage.order({ doomed, low }, cfg, nil, can)
+    eq(tiers[0], 0, 'low HP switched off')
+
+    -- the priority list: first, in your order, only what applies; buffs only when missing
+    cfg.triage_opts.crit = true
+    cfg.triage_opts.spells = { 'haste', 'cure2', 'cursna' }
+    local who = mem(2, 600)
+    local tiles = triage.tiles(who, cfg, preset, nil, 0, 4)
+    eq(tiles[1].key, 'haste'); eq(tiles[2].key, 'cure2')
+    for _, tl in ipairs(tiles) do truthy(tl.key ~= 'cursna', 'cleanse only when they have the debuff') end
+    who.buffs = { { key = 'haste' } }
+    tiles = triage.tiles(who, cfg, preset, nil, 0, 4)
+    truthy(tiles[1].key ~= 'haste', 'haste dropped once they have it')
+    eq(#triage.tiles(who, cfg, preset, nil, 0, 3), 3)
+    local d2 = mem(3, 500, { debuffs = { 'doom' }, buffs = { { key = 'haste' } } })
+    tiles = triage.tiles(d2, cfg, preset, nil, 3, 4)
+    eq(tiles[1].key, 'cure2', 'your order is kept'); eq(tiles[2].key, 'cursna')
+
+end)
+
+
+test('title bar: optional; hidden when locked, always back while unlocked', function()
+    local function build(over)
+        local cfg = new_cfg(over)
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        local title = false
+        for _, c in ipairs(g.cmds) do if c.op == 'text' and c.s == 'CLICKHEAL' then title = true end end
+        return fr.geom, title
+    end
+    local on, t_on = build({ mode = 'party', locked = true, show_header = true })
+    local off, t_off = build({ mode = 'party', locked = true, show_header = false })
+    truthy(on.header_h > 0 and t_on)
+    eq(off.header_h, 0); eq(t_off, false)
+    truthy(off.height < on.height, 'panel is shorter without the bar')
+    local unl, t_unl = build({ mode = 'party', locked = false, show_header = false })
+    truthy(unl.header_h > 0 and t_unl, 'unlocking brings the bar back so you can move and lock')
+end)
+
+
+test('name size: option scales the names, the row keeps its height, icons make room', function()
+    eq(chconfig.sanitize({ name_scale = 9 }).name_scale, 2.0); eq(chconfig.sanitize({ name_scale = 0 }).name_scale, 0.8)
+    local function names(over)
+        local cfg = new_cfg(over)
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        local ks, n = {}, 0
+        for _, c in ipairs(g.cmds) do
+            if c.op == 'text' and c.s:match('^%u+$') and #c.s >= 4 and c.c ~= 0 and c.k and c.k > 1.2 then n = n + 1 end
+        end
+        return n, fr.geom
+    end
+    local n1 = names({ mode = 'party' })
+    local n2, geom = names({ mode = 'party', name_scale = 1.5 })
+    eq(n1, 0); truthy(n2 > 0, 'names drawn at the larger size')
+    local a = layout.compute({ row_h = 44, debuff_icon = 14, buff_icon = 14, name_scale = 1.0 }, 1080)
+    local b = layout.compute({ row_h = 44, debuff_icon = 14, buff_icon = 14, name_scale = 2.0 }, 1080)
+    eq(a.card_h, b.card_h); truthy(b.eff.debuff_icon <= a.eff.debuff_icon)
 end)
 
 print(string.format('\n%d passed, %d failed', passed, failed))

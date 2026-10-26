@@ -82,6 +82,10 @@ function M.run(imgui, emit)
     if ok and io then
         local okd, ds = pcall(function() return io.DisplaySize end)
         add('display size: ' .. (okd and describe(ds) or 'NOT AVAILABLE (will assume 1920x1080)'))
+        for _, k in ipairs({ 'DisplayFramebufferScale', 'FontGlobalScale' }) do
+            local okk, v = pcall(function() return io[k] end)
+            add('io.' .. k .. ': ' .. (okk and describe(v) or 'n/a'))
+        end
         for _, k in ipairs({ 'KeyShift', 'KeyCtrl', 'KeyAlt' }) do
             local okk, v = pcall(function() return io[k] end)
             add(string.format('modifier io.%s: %s', k, okk and describe(v) or 'NOT AVAILABLE (modifier clicks will not work)'))

@@ -117,7 +117,6 @@ scenario('strip_flyout_you',      { mode = 'party' }, 1920, 1080, 3.0, { 120, 30
 scenario('strip_flyout_alliance', { mode = 'alliance2', demo_alliance_debuffs = true }, 1920, 1080, 3.0, { 350, 160 })
 scenario('strip_flyout_4k',       { mode = 'party' }, 3840, 2160, 3.0, { 240, 140 })
 scenario('strip_job_colors',      { mode = 'alliance1', colors = 'job' }, 1920, 1080, 3.0)
-scenario('strip_job_icons',       { mode = 'alliance1', colors = 'job', job_icon = true }, 1920, 1080, 3.0)
 scenario('hairline_party',         { mode = 'party', skin = 'hairline', colors = 'job' }, 1920, 1080, 3.0)
 scenario('hairline_mp_pct',        { mode = 'party', skin = 'hairline', show_mp_pct = true }, 1920, 1080, 3.0)
 scenario('hairline_alliance',      { mode = 'alliance1', skin = 'hairline' }, 1920, 1080, 3.0)

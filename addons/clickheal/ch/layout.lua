@@ -40,6 +40,41 @@ end
 
 local function round(v) return math.floor(v + 0.5) end
 
+--- What fits inside a row of the chosen height. The row height always wins: the icon sizes, the hairline
+-- percentage and the MP extras shrink (or switch off) when there is not enough room. Base px.
+-- Returns { debuff_icon, buff_icon, mp_h, mp_pct, hl_pct }; an icon size of 0 means the strip is hidden.
+function layout.effective(opts)
+    local row_h = math.max(24, opts.row_h or layout.STRIP.card_h)
+    local di, bi = opts.debuff_icon or 14, opts.buff_icon or 14
+    local e = { debuff_icon = di, buff_icon = bi, mp_h = opts.mp_h or 0, mp_pct = opts.mp_pct, hl_pct = opts.hl_pct or 2.0 }
+    if opts.triage then return e end
+    local name_extra = math.ceil(13 * math.max(0, (opts.name_scale or 1) - 1))   -- a bigger name is taller
+
+    local function fit_icons(avail)
+        local biggest = math.max(di, bi)
+        if avail >= biggest then return end
+        local r = math.max(0, avail) / biggest
+        e.debuff_icon, e.buff_icon = math.floor(di * r), math.floor(bi * r)
+        if math.max(e.debuff_icon, e.buff_icon) < 9 then e.debuff_icon, e.buff_icon = 0, 0 end
+    end
+
+    if opts.skin == 'hairline' then
+        local mph = (e.mp_h > 0) and math.max(1, math.floor(e.mp_h * 0.5)) or 0
+        local top = row_h - (3 + 5 + 1 + mph + 3)                 -- room above the rail
+        local function pct_k(mp) return (top - 2 - (mp and math.max(0, 13 * mp - 3) or 0)) / 13 end
+        local k = pct_k(e.mp_pct)
+        if e.mp_pct and k < math.min(e.hl_pct, 1.3) then e.mp_pct = nil; k = pct_k(nil) end
+        e.hl_pct = math.max(1.0, math.min(e.hl_pct, k))
+        fit_icons(top - 19 - name_extra)                                       -- name line + gaps above the icons
+    else
+        local extras = math.max(0, e.mp_h - 3)
+        local avail = row_h - layout.STRIP.text_h - extras - name_extra
+        if avail < 9 then e.mp_h = math.min(e.mp_h, 3); avail = row_h - layout.STRIP.text_h - name_extra end
+        fit_icons(avail)
+    end
+    return e
+end
+
 --- Computes every rectangle the UI needs, in final screen pixels relative to the panel origin.
 --
 -- opts:
@@ -50,15 +85,17 @@ function layout.compute(opts, display_h)
     local base = layout.STRIP
     local s = layout.scale(opts, display_h)
 
+    local eff = layout.effective(opts)
+    local row_h = math.max(24, opts.row_h or base.card_h)
+
     local g = {
         scale   = s,
         orient  = opts.orientation or 'columns',
-        header_h = round(layout.HEADER_H * s),
+        header_h = (opts.header == false) and 0 or round(layout.HEADER_H * s),
         card_w  = round((opts.row_w or base.card_w) * s),
-        -- Tall enough for the name line plus the icon strip, whatever the user picked.
-        card_h  = round(math.max(opts.row_h or base.card_h, ((opts.skin == 'hairline') and 28 or base.text_h) + math.max(opts.debuff_icon or 14, opts.buff_icon or 14)
-            + math.max(0, (opts.mp_h or 0) - 3)
-            + (opts.mp_pct and math.ceil(20 * opts.mp_pct) or 0)) * s),
+        -- The row is exactly as tall as the user chose; icons, percentage and extras shrink to fit (layout.effective).
+        card_h  = round(row_h * s),
+        eff     = eff,
         pad     = math.max(1, round(base.pad * s)),
         gap     = math.max(1, round(layout.CARD_GAP * s)),
         group_gap = round(layout.GROUP_GAP * s),

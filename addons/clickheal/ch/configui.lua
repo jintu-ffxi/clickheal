@@ -13,6 +13,7 @@ local chconfig = require('ch.chconfig')
 local debuffs  = require('ch.debuffs')
 local spells   = require('ch.spells')
 local layout   = require('ch.layout')
+local fonts    = require('ch.fonts')
 local bindings = require('ch.bindings')
 
 local M = {}
@@ -167,12 +168,15 @@ local function label(text, tip)
     return ctrl_w
 end
 
+-- ImGui's Text calls take printf-style text here, so a literal % must be doubled.
+local function esc(text) return (tostring(text):gsub('%%', '%%%%')) end
+
 local function hint(text)
-    with_color(DIM, function() imgui.TextWrapped(text) end)
+    with_color(DIM, function() imgui.TextWrapped(esc(text)) end)
 end
 
 local function warn_text(text)
-    with_color(WARN, function() imgui.TextWrapped(text) end)
+    with_color(WARN, function() imgui.TextWrapped(esc(text)) end)
 end
 
 local function section(title)
@@ -297,10 +301,14 @@ local function page_layout(s, ctx)
 
     section('Size')
     changed = checkbox('Follow game resolution', s, 'auto_scale', '1080p = 1x, 4K = 2x.') or changed
-    changed = slider(s.auto_scale and 'Size multiplier' or 'Size (absolute)', s, 'scale', 0.5, 3.0, '%.2f',
+    changed = slider(s.auto_scale and 'Frame zoom' or 'Frame size (absolute)', s, 'scale', 0.5, 3.0, '%.2f',
         'You can also drag the corner of the window while it is unlocked.') or changed
-    changed = slider('Text size', s, 'font_mult', 0.6, 2.0) or changed
-    changed = slider('Opacity', s, 'opacity', 0.2, 1.0) or changed
+    changed = slider('Frame text size', s, 'font_mult', 0.6, 2.0) or changed
+    changed = slider('Row background', s, 'opacity', 0.2, 1.0, '%.2f', 'How solid each member row\'s background is.') or changed
+    changed = slider('Panel background', s, 'opacity_panel', 0.0, 1.0, '%.2f', 'The backdrop behind all rows and the title strip. 0 = fully see-through.') or changed
+    changed = slider('HP bar', s, 'opacity_hp', 0.2, 1.0, '%.2f', 'How solid the HP fill is.') or changed
+    changed = slider('MP bar', s, 'opacity_mp', 0.2, 1.0, '%.2f', 'How solid the MP bar is.') or changed
+    changed = slider('Spell menu background', s, 'opacity_flyout', 0.3, 1.0, '%.2f', 'The spell menu that opens when you hover a member.') or changed
     if ctx.geom and ctx.disp_w and ctx.disp_h then
         local g = ctx.geom
         hint(string.format('Now %d x %d px (%.1f%% x %.1f%% of the %d x %d screen), effective scale %.2f.',
@@ -327,10 +335,11 @@ local SKIN_OPTIONS = {
 local function page_appearance(s)
     local changed = false
     section('Style')
+    changed = checkbox('Show title bar', s, 'show_header', 'The CLICKHEAL / MOVE / CFG bar above the rows. Off = rows only (open this panel with /ch). The bar comes back while the frames are unlocked.') or changed
     changed = combo('Row style', s, 'skin', SKIN_OPTIONS,
         'Solid: the filled HP row. Hairline: no cards, a large colored percentage and a thin HP rail.') or changed
     if s.skin == 'hairline' then
-        changed = slider('Percent size', s, 'pct_scale', 1.0, 2.2, '%.2f', 'Size of the large HP percentage in the Hairline style.') or changed
+        changed = slider('Percent size', s, 'hl_pct', 1.0, 3.0, '%.2f', 'Size of the large HP percentage in the Hairline style.') or changed
     end
     changed = checkbox('Triage view', s, 'triage', 'One panel for whoever needs healing most, with cure buttons sized to what is missing, and a compact list of everyone else.') or changed
 
@@ -340,9 +349,12 @@ local function page_appearance(s)
 
     section('Rows')
     changed = slider_int('Row width', s, 'row_w', 160, 360, 'Width of each member row, in pixels at 1080p.') or changed
-    changed = slider_int('Row height', s, 'row_h', 30, 72, 'Height of each member row (the HP bar), in pixels at 1080p.') or changed
-    changed = slider_int('Row slant (0 = square)', s, 'slant', 0, 16, '0 gives clean rounded rows.') or changed
-    changed = checkbox('Job icons instead of text', s, 'job_icon', 'Draws a small job pictogram in the job block instead of WHM, BLM and so on.') or changed
+    if s.skin == 'hairline' then
+        changed = slider_int('Row height', s, 'hl_row_h', 28, 90, 'Height of each member row, in pixels at 1080p. The percentage, icons and extras shrink to fit; icons hide when there is no room.') or changed
+    else
+        changed = slider_int('Row height', s, 'row_h', 24, 72, 'Height of each member row, in pixels at 1080p. The icons and extras shrink to fit; icons hide when there is no room.') or changed
+    end
+    changed = slider('Name size', s, 'name_scale', 0.8, 2.0, '%.2f', 'Size of the player names. The row height stays as set, so the icons shrink to make room.') or changed
     changed = checkbox('Show distance', s, 'show_dist') or changed
     changed = checkbox('Show MP bar', s, 'show_mp') or changed
     changed = slider_int('MP bar thickness', s, 'mp_height', 2, 14, 'Height of the MP bar along the bottom of each row, in pixels at 1080p.') or changed
@@ -360,14 +372,15 @@ end
 
 local function page_flyout(s)
     local changed = false
-    section('Hover flyout')
+    section('Spell menu on hover')
     changed = checkbox('Open on hover', s, 'flyout', 'Hover a member to open their spell buttons beside the row.') or changed
+    changed = checkbox('Show spell icons', s, 'flyout_icons', 'Buff and cleanse buttons show the game\'s status icon (Haste, Poison...). Put your own PNGs in assets/spells/<spell key>.png to cover any spell, for example cure4.png. Spells without an icon keep their text.') or changed
     changed = slider_int('Button size', s, 'fly_btn', 24, 64, 'In pixels at 1080p; scales with the game resolution.') or changed
     changed = slider_int('Button spacing', s, 'fly_gap', 2, 16) or changed
 
     section('Other ways to cast')
     changed = checkbox('Shared spell bar', s, 'spellbar', 'Pick a spell, then click a member.') or changed
-    changed = checkbox('Cast on a plain row click', s, 'cell_binds', 'Uses the Bindings page.') or changed
+    changed = checkbox('Cast on a plain row click', s, 'cell_binds', 'A plain click on a row casts your job\'s main cure. Right click, Shift, Ctrl and Alt use lighter or stronger spells; hover a row to see them.') or changed
     changed = checkbox('Plain clicks cast buffs', s, 'buff_mode', 'Plain-click bindings use your job\'s buff spells instead of heals.') or changed
 
     section('Heal range')
@@ -379,25 +392,6 @@ end
 
 -- Spell choices for a binding: none, cleanse, then every party spell grouped by kind.
 local BIND_OPTIONS
-local function bind_options()
-    if BIND_OPTIONS then return BIND_OPTIONS end
-    local order = { cure = 1, curaga = 2, status = 3, raise = 4, regen = 5, buff = 6 }
-    local keys = {}
-    for key, d in pairs(spells.defs) do
-        if not d.ja then keys[#keys + 1] = key end
-    end
-    table.sort(keys, function(a, b)
-        local da, db = spells.defs[a], spells.defs[b]
-        local oa, ob = order[da.kind] or 9, order[db.kind] or 9
-        if oa ~= ob then return oa < ob end
-        return a < b
-    end)
-    BIND_OPTIONS = { { '-', '(nothing)' }, { 'cleanse', 'Cleanse (best -na / Erase)' } }
-    for _, key in ipairs(keys) do
-        BIND_OPTIONS[#BIND_OPTIONS + 1] = { key, spells.defs[key].name }
-    end
-    return BIND_OPTIONS
-end
 
 -- Spells that fit a flyout group and that the player has learned (everything when the level is unknown).
 local function order_options(group, who)
@@ -413,29 +407,6 @@ local function order_options(group, who)
     local out = {}
     for _, key in ipairs(keys) do out[#out + 1] = { key, spells.defs[key].name } end
     return out
-end
-
-local function page_bindings(s, ctx)
-    local changed = false
-    section('Click bindings')
-    hint('Used when "Cast on a plain row click" is on (Flyout page). A KO\'d member always gets Raise: left = strongest, right = cheapest.')
-    imgui.Spacing()
-    local preset = ctx.preset or spells.presets.generic
-    local eff = bindings.effective({ bindings = s.bindings, buff_mode = false }, preset)
-    local opts = bind_options()
-    for _, slot in ipairs(bindings.SLOTS) do
-        local pick = { v = eff[slot] or '-' }
-        if combo(bindings.LABEL[slot], pick, 'v', opts, nil, 'bind_' .. slot) then
-            s.bindings[slot] = pick.v
-            changed = true
-        end
-    end
-    imgui.Spacing()
-    if button('Reset bindings to job defaults', 'resetbinds') then
-        s.bindings = {}
-        changed = true
-    end
-    return changed
 end
 
 -- Reorder the spells in each flyout group. The order is the same for every party member.
@@ -502,6 +473,94 @@ local function page_spells(s, ctx)
     return changed
 end
 
+local function triage_level_of(s, key)
+    return require('ch.triage').level(s, key)
+end
+
+local TRIAGE_LEVELS = {
+    { 'urgent',    'Urgent (top priority)' },
+    { 'important', 'Important' },
+    { 'off',       'Ignore' },
+}
+
+--- Every spell the triage panel can offer for the player: single-target cures, Curagas, cleanses and buffs.
+local function triage_options(who)
+    local out, seen = {}, {}
+    for _, group in ipairs({ 'heal', 'cleanse', 'buff' }) do
+        for _, o in ipairs(order_options(group, who)) do
+            local d = spells.defs[o[1]]
+            local ok = (group ~= 'heal') or d.kind == 'cure' or d.kind == 'curaga'
+            if ok and not seen[o[1]] then seen[o[1]] = true; out[#out + 1] = o end
+        end
+    end
+    return out
+end
+
+local function page_triage(s, ctx)
+    local changed = false
+    local o = s.triage_opts
+    section('Triage view')
+    hint('One panel for the member who needs help most, with spell buttons for them, and a compact list of everyone else.')
+    changed = checkbox('Use the triage view', s, 'triage', 'Replaces the member rows with the triage panel.') or changed
+    changed = checkbox('Debuffs raise priority', o, 'debuffs', 'A member with a debuff you can remove can outrank a member with lower HP.') or changed
+    changed = checkbox('Low HP raises priority', o, 'crit', 'A member at or below the low HP threshold (Alerts page) outranks healthier ones.') or changed
+    changed = slider_int('Spell buttons', o, 'tiles', 3, 5, 'How many spell buttons the panel shows.') or changed
+
+    section('How each debuff counts')
+    hint('Only debuffs one of your spells can remove are considered. Urgent beats low HP, Important comes after it.')
+    for _, key in ipairs(debuffs.order) do
+        local info = debuffs.info[key]
+        if info and info.spell then
+            local t = { v = triage_level_of(s, key) }
+            if combo(info.label, t, 'v', TRIAGE_LEVELS, nil, 'tl_' .. key) then
+                o.levels[key] = t.v; changed = true
+            end
+        end
+    end
+
+    section('Spells to offer first')
+    hint('Your list comes first, in this order, for the featured member. A spell only shows when it applies: cures always, a cleanse when they have that debuff, a buff when they lack it. Empty = automatic.')
+    local list = {}
+    for i, k in ipairs(o.spells) do list[i] = k end
+    local btns_w = 0
+    for _, b in ipairs({ '^', 'v', 'x' }) do btns_w = btns_w + text_w(b) + 20 * sc + 10 * sc end
+    local name_w = math.max(80 * sc, full_w - btns_w - 10 * sc)
+    local edited = false
+    local i = 1
+    while i <= #list do
+        local def = spells.defs[list[i]]
+        imgui.Text(clip(string.format('%2d.  %s', i, def and def.name or list[i]), name_w - 4 * sc))
+        imgui.SameLine(name_w + 6 * sc)
+        if i > 1 and imgui.SmallButton(string.format('^##tup_%d', i)) then
+            list[i], list[i - 1] = list[i - 1], list[i]; edited = true
+        end
+        imgui.SameLine()
+        if i < #list and imgui.SmallButton(string.format('v##tdn_%d', i)) then
+            list[i], list[i + 1] = list[i + 1], list[i]; edited = true
+        end
+        imgui.SameLine()
+        if imgui.SmallButton(string.format('x##trm_%d', i)) then
+            table.remove(list, i); edited = true
+        else
+            i = i + 1
+        end
+    end
+    imgui.SetNextItemWidth(math.max(90 * sc, math.min(320 * sc, full_w - text_w('Add') - 16 * sc)))
+    if imgui.BeginCombo('Add##tadd', clip('(choose a spell)', 140 * sc)) then
+        for _, opt in ipairs(triage_options(ctx.player)) do
+            if imgui.Selectable(clip(opt[2], 300 * sc) .. '##tadd' .. opt[1], false) then
+                local dup = false
+                for _, k in ipairs(list) do if k == opt[1] then dup = true end end
+                if not dup then list[#list + 1] = opt[1]; edited = true end
+            end
+        end
+        imgui.EndCombo()
+    end
+    if edited then o.spells = list; changed = true end
+    if #o.spells > 0 and button('Back to automatic', 'trst') then o.spells = {}; changed = true end
+    return changed
+end
+
 local function page_alerts(s)
     local changed = false
     local a = s.alerts
@@ -529,10 +588,17 @@ end
 
 local function page_general(s, ctx)
     local changed = false
+    section('This window')
+    changed = slider_int('Setup window zoom (%)', s, 'ui_zoom', 60, 300, 'Makes this setup window and its text bigger or smaller. 100 = normal. Use the frame sizes on the Appearance page for the party frames.') or changed
+
+    changed = checkbox('Fix mouse after resizing the game window', s, 'mouse_fix', 'Experimental. If the game window is not the same size as the game picture, the mouse lands off target. This corrects it for the party frames and the spell menu (not this setup panel). Test it with /ch cursor.') or changed
+
     section('Data')
     changed = checkbox('Demo data', s, 'demo', 'On = fake party for trying the layout. Off = your real party.') or changed
     if s.demo then
         changed = checkbox('Demo: show alliance debuffs', s, 'demo_alliance_debuffs') or changed
+    else
+        changed = checkbox('Fill empty alliance slots with demo members', s, 'demo_fill', 'Keeps your real party live and adds fake alliance members so you can see and test the alliance layout. Clicks on fake members only log, they never cast.') or changed
     end
 
     section('Casting')
@@ -550,7 +616,7 @@ local function page_general(s, ctx)
 
     section('Commands')
     hint('/ch  /ch lock  /ch unlock  /ch scale <n|auto>  /ch mode <party|alliance1|alliance2>')
-    hint('/ch cast  /ch demo  /ch buttons <size> [gap]  /ch slant <n>  /ch partydump  /ch apicheck  /ch help')
+    hint('/ch cast  /ch demo  /ch buttons <size> [gap]  /ch partydump  /ch apicheck  /ch help')
 
     section('Reset')
     if reset_armed then
@@ -572,9 +638,9 @@ end
 M.PAGES = {
     { 'Layout',     page_layout },
     { 'Appearance', page_appearance },
-    { 'Flyout',     page_flyout },
+    { 'Spell menu', page_flyout },
     { 'Spells',     page_spells },
-    { 'Bindings',   page_bindings },
+    { 'Triage',     page_triage },
     { 'Alerts',     page_alerts },
     { 'General',    page_general },
 }
@@ -642,7 +708,7 @@ function M.draw(s, ctx)
     if not M.open[1] then return false, nil end
 
     local disp_w, disp_h = ctx.disp_w or 1920, ctx.disp_h or 1080
-    sc = math.max(1.0, disp_h / layout.BASE_HEIGHT)
+    sc = math.max(1.0, disp_h / layout.BASE_HEIGHT) * ((s.ui_zoom or 100) / 100)
     local cond_first = _G.ImGuiCond_FirstUseEver or 4
     -- Opens at a comfortable size, never larger than the screen, and cannot be dragged smaller than
     -- the point where the page layout stops being usable.
@@ -662,7 +728,9 @@ function M.draw(s, ctx)
         pop_theme(ncol, nvar)
         error(visible, 0)
     end
+    local fpushed = false
     if visible then
+        fpushed = fonts.push()
         pcall(imgui.SetWindowFontScale, sc)
 
         local ok, err = pcall(function()
@@ -712,6 +780,7 @@ function M.draw(s, ctx)
         end)
         if not ok then fail('setup panel: ' .. tostring(err)) end
     end
+    fonts.pop(fpushed)
     imgui.End()
     pop_theme(ncol, nvar)
 

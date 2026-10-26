@@ -60,10 +60,10 @@ function M.new(font_scale)
         return true
     end
 
-    -- User-supplied job icon files: off by default; set g.has_job_files = true to record 'jobfile' commands.
-    function g.job_icon(x, y, size, abbr)
-        if not g.has_job_files then return false end
-        g.cmds[#g.cmds + 1] = { op = 'jobfile', x = x, y = y, w = size, h = size, id = abbr }
+    -- User-supplied spell icon files: off by default; g.has_spell_files = true records 'spellfile' commands.
+    function g.spell_icon(x, y, size, key)
+        if not g.has_spell_files then return false end
+        g.cmds[#g.cmds + 1] = { op = 'spellfile', x = x, y = y, w = size, h = size, id = key }
         return true
     end
 

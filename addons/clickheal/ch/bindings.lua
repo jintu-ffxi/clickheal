@@ -142,7 +142,7 @@ function bindings.describe(eff, m, preset)
     return out
 end
 
---- One line per slot, for /ch binds.
+--- One line per slot, (unused now that the Bindings page is gone).
 function bindings.list_lines(cfg, preset)
     local eff = bindings.effective(cfg, preset)
     local out = {}

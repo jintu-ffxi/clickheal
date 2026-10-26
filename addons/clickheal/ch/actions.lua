@@ -110,6 +110,11 @@ function actions.perform(ev, ctx)
 
     local token = def.selfonly and '<me>' or actions.target_token(ev.slot)
     if def.selfonly then who = 'you' end
+    if m and m.demo and not def.selfonly then
+        ctx.log(string.format('[ClickHeal demo] %s -> %s (demo member). Nothing was sent to the game.', def.name, who))
+        casting.start(def, ctx.now, ctx.cfg)
+        return 'cast'
+    end
     if ctx.send and ctx.cfg and ctx.cfg.cast and not ctx.demo then
         local cmd = actions.command_for(def, token)
         ctx.send(cmd)
