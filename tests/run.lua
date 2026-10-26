@@ -1356,8 +1356,8 @@ test('casting: a cast is busy for its cast time plus the delay; Fast Cast shorte
     casting.reset()
     casting.start(spells.defs.cure4, 10, { fast_cast = 0, cast_lockout = 1.0 })
     near(casting.left(10), 3.5, 1e-9); near(casting.left(12), 1.5, 1e-9); eq(casting.left(13.6), 0)
-    local info = casting.info(11.25)
-    near(info.frac, 0.5, 1e-9, 'half way through the 2.5s cast')
+    local info = casting.info(12.0)         -- past the short wait for the server (see the first-cast test)
+    near(info.frac, 0.8, 1e-9, '2.0s into the 2.5s cast')
     casting.reset()
     casting.start(spells.defs.cure4, 10, { fast_cast = 20, cast_lockout = 1.0 })
     near(casting.left(10), 2.5 * 0.8 + 1.0, 1e-9)
@@ -2158,6 +2158,166 @@ test('frame: layout and fitted preset are reused while their inputs match, rebui
     local low = { roster = demo.roster, player = function(t) local p = demo.player(t); p.level = 20; return p end }
     local frl = frame.build(new_cfg({ show_locked = false }), low, 3.6, 1920, 1080, {})
     truthy(frl.preset ~= fr2.preset, 'a different level rebuilds the preset')
+end)
+
+-- =============================================================================================
+-- server cast packets (0x028): the cast bar starts, ends and fills from what the server and the game say
+-- =============================================================================================
+
+local castpacket = require('ch.castpacket')
+
+local action_packet = require('tests.packets').action_packet
+
+local ME = 0x00112233
+
+test('castpacket: reads the actor, category, param and the spell id of a cast that begins', function()
+    local p = castpacket.parse(action_packet(ME, 8, castpacket.CAST_BEGIN, 4))
+    eq(p.actor, ME); eq(p.category, 8); eq(p.param, 0x6163); eq(p.first, 4)
+    eq(castpacket.actor(action_packet(ME, 8, 1, 4)), ME, 'the cheap actor read agrees')
+    local item = castpacket.parse(action_packet(ME, 9, castpacket.CAST_BEGIN, 4097))
+    eq(item.category, 9); eq(item.first, 4097)
+    local fin = castpacket.parse(action_packet(ME, 4, 5, 4))
+    eq(fin.category, 4); eq(fin.param, 5, 'a 32-bit param outside spells and items')
+    eq(castpacket.parse('short'), nil, 'a truncated packet is ignored, not an error')
+    eq(castpacket.parse(nil), nil)
+end)
+
+test('castpacket: classifies only your own begin / interrupt / landing, and finds the spell', function()
+    local what, def = castpacket.classify(castpacket.parse(action_packet(ME, 8, castpacket.CAST_BEGIN, require('ch.spell_ids').cure4.spell)), ME)
+    eq(what, 'begin'); eq(def, spells.defs.cure4, 'the spell id maps back to our spell')
+    eq((castpacket.classify(castpacket.parse(action_packet(ME, 8, castpacket.CAST_BEGIN, 99999)), ME)), 'begin', 'unknown spell: still a begin')
+    eq(castpacket.classify(castpacket.parse(action_packet(ME, 8, castpacket.CAST_BROKE, 4)), ME), 'broke')
+    eq(castpacket.classify(castpacket.parse(action_packet(ME, 4, 5, 4)), ME), 'landed')
+    eq(castpacket.classify(castpacket.parse(action_packet(ME, 5, 5, 4)), ME), 'landed')
+    eq(castpacket.classify(castpacket.parse(action_packet(0x99999, 8, castpacket.CAST_BEGIN, 4)), ME), nil, 'someone else casting')
+    eq(castpacket.classify(castpacket.parse(action_packet(ME, 1, 0, 4)), ME), nil, 'a melee round')
+    eq(castpacket.classify(castpacket.parse(action_packet(ME, 8, 12345, 4)), ME), nil, 'a cast category with some other param')
+    eq(castpacket.classify(nil, ME), nil)
+end)
+
+--- Simulates a cast whose server start comes `lag` seconds after the click, frame by frame at 10 Hz.
+local function run_cast(lag, real, opts)
+    opts = opts or {}
+    casting.reset()
+    local def = spells.defs.cure4
+    casting.start(def, 10, { cast_lockout = 1.0 })
+    local frames, begun = {}, false
+    for i = 1, 60 do
+        local t = 10 + i * 0.1
+        if not begun and t >= 10 + lag then casting.server_begin(t, def); begun = true end
+        local elapsed = t - 10 - lag
+        local pct = begun and math.max(0, math.min(1, elapsed / real)) or 0
+        if opts.interrupt_at and begun and elapsed >= opts.interrupt_at and not opts.broken then
+            casting.server_broke(t); opts.broken = true
+        end
+        if begun and not opts.broken and not opts.landed and elapsed >= real then
+            casting.server_landed(t); opts.landed = true
+        end
+        if not opts.broken and not opts.landed then casting.observe(t, (pct > 0 and pct < 1) and pct or (pct >= 1 and 1 or 0)) end
+        casting.expire(t)
+        frames[#frames + 1] = { t = t, info = casting.info(t), left = casting.left(t), pct = pct }
+    end
+    return frames
+end
+
+test('casting with server packets: the bar waits for the server, then follows the game bar exactly', function()
+    for _, lag in ipairs({ 0.2, 0.6, 1.2 }) do          -- including a latency above the old 0.6 s give-up
+        local frames = run_cast(lag, 2.5)
+        local prev = 0
+        -- the very first cast has no packet history yet, so only the part after the server start is held to the rule
+        for _, fr in ipairs(frames) do
+            if fr.t - 10 >= lag - 0.001 and fr.info then
+                if fr.pct > 0 and fr.pct < 1 then near(fr.info.frac, fr.pct, 0.02, 'follows the game bar (lag ' .. lag .. ')') end
+                truthy(fr.info.frac >= prev - 1e-9, 'never runs backwards (lag ' .. lag .. ')')
+                prev = fr.info.frac
+                truthy(fr.left > 0, 'still busy while the bar shows (lag ' .. lag .. ')')
+            end
+        end
+    end
+    -- once packets are known to work, the bar holds at 0 while it waits for the server
+    local def = spells.defs.cure4
+    casting.start(def, 100, { cast_lockout = 1.0 })
+    local waiting = casting.info(100.4)
+    truthy(waiting and waiting.frac == 0, 'held at 0 while the server has not answered')
+    casting.server_begin(100.9, def)         -- 0.9 s of latency: the old code gave up at 0.6 s and started over
+    truthy(casting.info(101.0) ~= nil, 'still the same cast')
+end)
+
+test('casting, first cast after a reload: no run-ahead, no snap back, even with nothing known yet', function()
+    casting.reset()                                     -- a fresh addon: no packet or bar history at all
+    local def = spells.defs.cure4
+    casting.start(def, 10, { cast_lockout = 1.0 })
+    for _, dt in ipairs({ 0.1, 0.3, 0.6, 0.9 }) do
+        local info = casting.info(10 + dt)
+        eq(info.frac, 0, 'held at 0 while the server has not answered (+' .. dt .. ')')
+    end
+    casting.server_begin(10.95, def)                    -- the server answers 0.95 s after the click
+    local prev = 0
+    for i = 1, 20 do
+        local t = 10.95 + i * 0.1
+        local pct = math.min(0.999, (t - 10.95) / 2.5)
+        casting.observe(t, pct)
+        local info = casting.info(t)
+        near(info.frac, pct, 0.02, 'follows the game bar')
+        truthy(info.frac >= prev - 1e-9, 'never backwards')
+        prev = info.frac
+    end
+end)
+
+test('casting: if nothing ever answers, the estimate takes over after the wait', function()
+    casting.reset()
+    casting.start(spells.defs.cure4, 10, { cast_lockout = 1.0 })
+    eq(casting.info(11.0).frac, 0, 'still waiting at 1 s')
+    truthy(casting.info(12.2).frac > 0.3, 'no server word after 1.5 s: shows the estimated progress again')
+end)
+
+test('casting with server packets: a landing ends the cast, then only the short delay is left', function()
+    local opts = {}
+    local frames = run_cast(0.3, 2.0, opts)
+    truthy(opts.landed, 'landing was delivered')
+    local last
+    for _, fr in ipairs(frames) do if fr.info then last = fr end end
+    truthy(last and last.t > 10 + 0.3 + 2.0, 'the bar ran to the end of the cast')
+    eq(frames[#frames].info, nil, 'idle again after the delay')
+end)
+
+test('casting with server packets: an interrupt freezes the bar, flags it, and frees you soon after', function()
+    local opts = { interrupt_at = 1.0 }
+    local frames = run_cast(0.3, 2.5, opts)
+    truthy(opts.broken)
+    local frozen, flagged
+    for _, fr in ipairs(frames) do
+        if fr.info and fr.info.broke then
+            flagged = true
+            frozen = frozen or fr.info.frac
+            near(fr.info.frac, frozen, 1e-9, 'stays where it stopped')
+        end
+    end
+    truthy(flagged, 'info says it was interrupted')
+    truthy(frozen > 0.3 and frozen < 0.5, 'stopped near 40%, got ' .. tostring(frozen))
+    eq(frames[#frames].info, nil, 'free again well before the cast would have ended')
+end)
+
+test('casting with server packets: a click the server never starts is given up on, but only after the wait', function()
+    casting.reset()
+    local def = spells.defs.cure4
+    casting.start(def, 10, { cast_lockout = 1.0 })
+    casting.server_begin(10.3, def); casting.server_landed(12.8)       -- packets are known to work now
+    casting.start(def, 20, { cast_lockout = 1.0 })                     -- this click gets no start packet (out of range)
+    casting.expire(20.9)
+    truthy(casting.left(20.9) > 1, 'still waiting at 0.9 s: slow servers must not look like failures')
+    casting.expire(21.6)
+    truthy(casting.left(21.6) <= 0.3 + 1e-9, 'released after the wait')
+end)
+
+test('casting with server packets: a cast started from a macro gets a bar too', function()
+    casting.reset()
+    casting.server_begin(50, spells.defs.cure3)
+    local info = casting.info(50.5)
+    truthy(info and info.key == 'cure3', 'bar for a cast that did not come from a click')
+    casting.reset()
+    casting.server_begin(60, nil)          -- a spell we do not know, while idle: nothing to show
+    eq(casting.info(60.5), nil)
 end)
 
 print(string.format('\n%d passed, %d failed', passed, failed))

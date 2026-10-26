@@ -35,6 +35,7 @@ local chatstatus = require('ch.chatstatus')
 local livebuffs  = require('ch.livebuffs')
 local apicheck = require('ch.apicheck')
 local spells   = require('ch.spells')
+local castpacket = require('ch.castpacket')
 
 -- ---------------------------------------------------------------------------------------------
 -- state
@@ -84,9 +85,25 @@ ashita.events.register('text_in', 'clickheal_text_in', function(e)
     if e and e.message then pcall(chatstatus.feed, e.message) end
 end)
 
+-- Your own casts: the server's action packet says when a cast begins, is interrupted or lands (ch/castpacket.lua).
+local function on_action(data)
+    local actor = castpacket.actor(data)
+    if not actor then return end
+    local me = game_source.my_server_id()
+    if actor ~= me then return end                       -- every nearby action arrives here; only ours matter
+    local what, def = castpacket.classify(castpacket.parse(data), me)
+    if not what then return end
+    local t = gfx.now()
+    if what == 'begin' then casting.server_begin(t, def)
+    elseif what == 'broke' then casting.server_broke(t)
+    else casting.server_landed(t) end
+end
+
 -- Read-only: other members' status effects come from the server's own status packets.
 ashita.events.register('packet_in', 'clickheal_packet_in', function(e)
-    if e and e.id and (e.id == 0x076 or e.id == 0x029 or e.id == 0x00A) then pcall(livebuffs.feed, e.id, e.data) end
+    if not (e and e.id) then return end
+    if e.id == 0x076 or e.id == 0x029 or e.id == 0x00A then pcall(livebuffs.feed, e.id, e.data)
+    elseif e.id == 0x028 then pcall(on_action, e.data) end
 end)
 
 ashita.events.register('unload', 'clickheal_unload', function()

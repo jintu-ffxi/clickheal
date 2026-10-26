@@ -58,6 +58,9 @@ function commands.run(args, s)
         local live = require('ch.livebuffs')
         say(string.format('status effects: %d members from game data, %d from chat   chat lines seen: %d',
             live.count(), require('ch.chatstatus').count(), require('ch.chatstatus').seen))
+        local cs = require('ch.casting').stats
+        say(string.format('cast packets seen: %d begin, %d interrupted, %d landed (all 0 after a cast = the cast bar uses its estimate)',
+            cs.begin, cs.broke, cs.landed))
         if not s.locked then say('The hover menu only works while LOCKED. /ch lock') end
         if not s.flyout then say('The hover spell menu is off (Spells page).') end
         if not s.visible then say('Frames are hidden. /ch show') end

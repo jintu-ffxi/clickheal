@@ -296,6 +296,14 @@ function game.player(_)
     }
 end
 
+--- Your server id (the actor id in action packets), or nil when the party cannot be read.
+function game.my_server_id()
+    local party = managers()
+    local id = party and call(party, 'GetMemberServerId', 0)
+    if type(id) == 'number' and id ~= 0 then return id end
+    return nil
+end
+
 --- Progress of the game's own cast bar, 0..1, or nil when it cannot be read.
 function game.castbar()
     local core = _G.AshitaCore

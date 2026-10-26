@@ -407,6 +407,46 @@ test('colour and text-size caches stay bounded under heavy churn and keep answer
     eq(errors_logged() - errs_before, 0)
 end)
 
+test('packet_in: your own cast packets drive the cast state; other players\' and junk packets do not', function()
+    local packets = require('tests.packets')
+    local casting = require('ch.casting')
+    local ids = require('ch.spell_ids')
+    local ME = 0x00AB1234
+    local party = setmetatable({ GetMemberServerId = function() return ME end }, { __index = function() return function() return nil end end })
+    local mem = setmetatable({ GetParty = function() return party end }, { __index = function() return function() return nil end end })
+    _G.AshitaCore = { GetMemoryManager = function() return mem end }
+    local errs_before, begin0, landed0 = errors_logged(), casting.stats.begin, casting.stats.landed
+    casting.reset()
+    sim.clock = sim.clock + 10
+    local function feed(data) handlers.packet_in({ id = 0x028, data = data }) end
+
+    feed(packets.action_packet(0x7777, 8, 0x6163, ids.cure4.spell))             -- somebody else begins a cast
+    eq(casting.info(sim.clock + 0.1), nil, 'another player casting does nothing')
+    feed('\1\2\3')                                                              -- junk
+    feed(nil)
+    handlers.packet_in({ id = 0x028 })                                           -- no data at all
+
+    feed(packets.action_packet(ME, 8, 0x6163, ids.cure4.spell))                 -- you begin Cure IV
+    local info = casting.info(sim.clock + 0.1)
+    truthy(info and info.key == 'cure4', 'your cast begins, with its spell')
+    eq(casting.stats.begin - begin0, 1)
+
+    feed(packets.action_packet(ME, 8, 28787, ids.cure4.spell))                  -- interrupted
+    local broke = casting.info(sim.clock + 0.1)
+    truthy(broke and broke.broke, 'interrupted is flagged')
+
+    casting.reset()
+    feed(packets.action_packet(ME, 8, 0x6163, ids.cure4.spell))
+    feed(packets.action_packet(ME, 4, 5, ids.cure4.spell))                      -- landed
+    eq(casting.stats.landed - landed0, 1)
+    truthy(casting.left(sim.clock + 0.1) <= 1.0 + 1e-6, 'after landing only the short delay is left')
+
+    for _ = 1, 3 do frame_tick() end                                            -- and drawing with all of that is fine
+    _G.AshitaCore = nil
+    eq(errors_logged() - errs_before, 0)
+    casting.reset()
+end)
+
 test('unload saves settings', function()
     local before = settings_state.saves
     handlers.unload()

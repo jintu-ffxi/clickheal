@@ -760,7 +760,7 @@ function ui.draw_flyout(f)
     if c then
         local bh = max(2, floor(3 * s))
         g.rect_filled(ox + 1, oy + plan.h - bh - 1, plan.w - 2, bh, theme.pack(1, 1, 1, 0.08), 0)
-        g.rect_filled(ox + 1, oy + plan.h - bh - 1, max(1, floor((plan.w - 2) * c.frac)), bh, A(pal.accent, 0.95), 0)
+        g.rect_filled(ox + 1, oy + plan.h - bh - 1, max(1, floor((plan.w - 2) * c.frac)), bh, A(c.broke and pal.bad or pal.accent, 0.95), 0)   -- red once interrupted
     end
     if f.tooltip then g.tooltip(f.tooltip, s) end
     return f.events
