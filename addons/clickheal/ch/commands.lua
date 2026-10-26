@@ -7,8 +7,6 @@
 ]]--
 
 local chconfig = require('ch.chconfig')
-local bindings = require('ch.bindings')
-local spells   = require('ch.spells')
 
 local commands = {}
 
@@ -20,21 +18,11 @@ local HELP = {
     '/ch mode <party|alliance1|alliance2>   (or 6 / 12 / 18)',
     '/ch orient <columns|stacked|rows>',
     '/ch demo [on|off]        demo data (off = your real party)',
-    '/ch buttons <24-64> [2-16]  flyout button size (and spacing)',
     '/ch status               show the switches that decide what hover and clicks do',
-    '/ch cast [on|off]        a click really casts the spell (off = only logs). Needs demo off.',
-    '/ch alerts [on|off]      priority alert bar',
-    '/ch buffmode [heal|buff] spell row shows heals or buffs (no argument = switch)',
-    '/ch flyout [on|off]      hover a member (Grid / Strip) to open their spell flyout',
-    '/ch order <heal|cleanse|buff|raise|ability> <spell keys...>   spell order, same for every member;  /ch order <group> reset',
-    '/ch bar [on|off]         shared spell bar under the Grid / Strip cells (pick a spell, then click a member)',
-    '/ch tab <heal|cleanse|buff|raise>   which spells the bar shows',
-    '/ch cellbinds [on|off]   Grid / Strip: plain clicks on a cell cast the bound spell too',
     '/ch reset confirm        restore every setting to defaults',
     '/ch apicheck             check which Ashita/ImGui calls this install supports',
     '/ch partydump            print the raw party status-icon data (for debuff icon support)',
     '/ch cursor [on|off]     draw a crosshair at the mouse position ImGui sees (for debugging offset clicks)',
-    '/ch inputdebug [on|off]  log where each mouse click lands (for debugging clicks)',
 }
 
 local function lower(v) return v and tostring(v):lower() or nil end
@@ -65,17 +53,17 @@ function commands.run(args, s)
 
     elseif cmd == 'status' then
         local function yn(v) return v and 'on' or 'off' end
-        say(string.format('shown: %s   locked: %s   hover flyout: %s   demo data: %s   casting: %s',
-            yn(s.visible), yn(s.locked), yn(s.flyout), yn(s.demo), yn(s.cast)))
-        say(string.format('shared spell bar: %s   plain-click casting: %s   buff clicks: %s   click queue: %s',
-            yn(s.spellbar), yn(s.cell_binds), yn(s.buff_mode), yn(s.queue_clicks)))
+        say(string.format('shown: %s   locked: %s   hover menu: %s   demo data: %s   click queue: %s',
+            yn(s.visible), yn(s.locked), yn(s.flyout), yn(s.demo), yn(s.queue_clicks)))
+        local live = require('ch.livebuffs')
+        say(string.format('status effects: %d members from game data, %d from chat   chat lines seen: %d',
+            live.count(), require('ch.chatstatus').count(), require('ch.chatstatus').seen))
         local cs = require('ch.chatstatus')
-        say('chat-tracked members: ' .. cs.count() .. '   chat lines seen: ' .. cs.seen)
         if cs.last_raw then
             say('last "effect" line, raw bytes: ' .. cs.last_raw:gsub('[^\32-\126]', function(c) return '<' .. c:byte() .. '>' end))
         end
-        if not s.locked then say('The hover flyout only works while LOCKED. /ch lock') end
-        if not s.flyout then say('Hover flyout is off. /ch flyout on') end
+        if not s.locked then say('The hover menu only works while LOCKED. /ch lock') end
+        if not s.flyout then say('The hover spell menu is off (Spells page).') end
         if not s.visible then say('Frames are hidden. /ch show') end
 
     elseif cmd == 'help' or cmd == '?' then
@@ -126,83 +114,6 @@ function commands.run(args, s)
         s.demo = onoff(a3, s.demo); out.changed = true
         say('Demo data: ' .. (s.demo and 'on' or 'off'))
 
-    elseif cmd == 'buttons' then
-        local size, gap = tonumber(a3), tonumber(args[4])
-        if not size then
-            say('Usage: /ch buttons <24-64> [spacing 2-16]   (now ' .. s.fly_btn .. ' / ' .. s.fly_gap .. ')')
-        else
-            s.fly_btn = size
-            if gap then s.fly_gap = gap end
-            chconfig.sanitize(s); out.changed = true
-            say('Flyout buttons: size ' .. s.fly_btn .. ', spacing ' .. s.fly_gap)
-        end
-
-    elseif cmd == 'cast' then
-        s.cast = onoff(a3, s.cast); out.changed = true
-        if s.cast and s.demo then
-            say('Casting: on, but demo data is on, so clicks still only log. Use /ch demo off to cast for real.')
-        elseif s.cast then
-            say('Casting: ON. A click now sends the spell to the game. Only use this where addons are allowed.')
-        else
-            say('Casting: off. Clicks only log.')
-        end
-
-    elseif cmd == 'alerts' then
-        s.alerts.enabled = onoff(a3, s.alerts.enabled); out.changed = true
-        say('Alert bar: ' .. (s.alerts.enabled and 'on' or 'off'))
-
-    elseif cmd == 'buffmode' then
-        local v = lower(a3)
-        if v == 'buff' or v == 'buffs' then s.buff_mode = true
-        elseif v == 'heal' or v == 'heals' then s.buff_mode = false
-        else s.buff_mode = not s.buff_mode end
-        out.changed = true
-        say('Spell row: ' .. (s.buff_mode and 'buffs' or 'heals and cleanses'))
-
-    elseif cmd == 'flyout' then
-        s.flyout = onoff(a3, s.flyout); out.changed = true
-        say('Hover flyout: ' .. (s.flyout and 'on' or 'off'))
-
-    elseif cmd == 'order' then
-        local group = lower(a3)
-        local ok_group = { heal = true, cleanse = true, buff = true, raise = true, ability = true }
-        if not group or not ok_group[group] then
-            say('Usage: /ch order <heal|cleanse|buff|raise|ability> <spell keys...>   or   /ch order <group> reset')
-        elseif lower(args[4]) == 'reset' then
-            s.spell_order[group] = nil; out.changed = true; say('Order for ' .. group .. ' reset to the job default.')
-        elseif not args[4] then
-            out.show_order = group
-        else
-            local keys, bad = {}, nil
-            for i = 4, #args do
-                local k = tostring(args[i]):lower()
-                if spells.defs[k] then keys[#keys + 1] = k else bad = bad or k end
-            end
-            if bad then
-                say('Unknown spell key: ' .. bad .. '   (keys look like cure4, curaga2, paralyna, haste, divine_seal)')
-            else
-                s.spell_order[group] = keys; out.changed = true
-                say(group .. ' order: ' .. table.concat(keys, ' '))
-            end
-        end
-
-    elseif cmd == 'bar' then
-        s.spellbar = onoff(a3, s.spellbar); out.changed = true
-        say('Spell bar: ' .. (s.spellbar and 'on' or 'off'))
-    elseif cmd == 'tab' then
-        local v = lower(a3)
-        if v and in_list(chconfig.enums.bar_tab, v) then
-            s.bar_tab = v; out.changed = true; say('Spell bar tab: ' .. v)
-        else
-            say('Usage: /ch tab <heal|cleanse|buff|raise>')
-        end
-    elseif cmd == 'cellbinds' then
-        s.cell_binds = onoff(a3, s.cell_binds); out.changed = true
-        say('Cell click bindings: ' .. (s.cell_binds and 'on' or 'off'))
-
-    elseif cmd == 'inputdebug' then
-        out.input_debug = (args[3] ~= 'off')
-        say('Input debug ' .. (out.input_debug and 'on: click things and read the [input] lines.' or 'off.'))
     elseif cmd == 'cursor' then
         out.cursor = (args[3] ~= 'off')
         say('Cursor test ' .. (out.cursor and 'on: a crosshair is drawn where ImGui thinks the mouse is. /ch cursor off to stop.' or 'off.'))

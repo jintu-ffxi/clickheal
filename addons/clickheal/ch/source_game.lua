@@ -9,8 +9,8 @@
       * name, HP/MP (+ percent), zone, job/sub/level, target index  -> every party and alliance slot
       * distance                                                    -> entities in range only
       * your own buffs/debuffs                                      -> yes (player:GetBuffs())
-      * other members' buffs/debuffs                                -> NOT here (needs the party-buff
-        packet, Phase 3), so has_buff_data is false for everyone but you.
+      * other members' buffs/debuffs                                -> status packets (livebuffs.lua), else the
+        game's party memory, else the chat log (chatstatus.lua).
       * spell and ability recasts                                   -> yes (IRecast), per spell/ability
         key through ch/spell_ids.lua; player.recast = seconds left, player.recast_total = longest seen.
     Slots match the party memory indexes: 0 = you, 1-5 = party, 6-11 = alliance 2, 12-17 = alliance 3.
@@ -20,6 +20,7 @@
 local debuffs = require('ch.debuffs')
 local ids     = require('ch.spell_ids')
 local chatstatus = require('ch.chatstatus')
+local live    = require('ch.livebuffs')
 
 local game = {}
 
@@ -91,11 +92,29 @@ local function own_status(player)
     return debuff_keys, buff_list, silenced, stopped
 end
 
---- Another party member's status effects, read from the party status packet the game keeps in memory.
--- Returns debuff keys, buff list, or nil when the game has sent nothing for this slot. That is the normal
--- case for trusts and for members the client has no status data for. UNVERIFIED layout (see /ch partydump):
--- GetStatusIcons(slot) is 32 icon ids (low 8 bits), GetStatusIconsBitMask(slot) holds 2 more bits per entry.
+--- Splits status effect ids into debuff keys and a buff list.
+local function classify(id_list)
+    local d, b, seen = {}, {}, {}
+    for _, id in ipairs(id_list) do
+        if not seen[id] then
+            seen[id] = true
+            local dk = debuffs.by_id[id]
+            if dk then d[#d + 1] = dk end
+            if BUFF_BY_ID[id] then b[#b + 1] = { key = BUFF_BY_ID[id] } end
+        end
+    end
+    return d, b
+end
+game.classify = classify
+
+--- Another party member's status effects. Best source first: the status packets the server sent
+-- (ch/livebuffs.lua), then the party status the game keeps in memory. Returns debuff keys, buff list, or
+-- nil when neither has anything for this slot (the normal case for trusts; the caller then uses the chat
+-- log). UNVERIFIED memory layout (see /ch partydump): GetStatusIcons(slot) is 32 icon ids (low 8 bits),
+-- GetStatusIconsBitMask(slot) holds 2 more bits per entry.
 local function member_status(party, slot)
+    local pk = live.get(call(party, 'GetMemberServerId', slot))
+    if pk then return classify(pk) end
     local sid = call(party, 'GetStatusIconsServerId', slot)
     if type(sid) ~= 'number' or sid == 0 then return nil end
     local icons = read_list(call(party, 'GetStatusIcons', slot), 32)

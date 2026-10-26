@@ -4,7 +4,6 @@
     confused with Ashita's own `settings` library.)
 ]]--
 
-local bindings = require('ch.bindings')
 local spells   = require('ch.spells')
 
 local chconfig = {}
@@ -16,14 +15,11 @@ chconfig.defaults = {
     queue_clicks     = true,        -- a click while casting is held and sent when you can act again
     fast_cast        = 0,           -- percent; shortens the estimated cast time (only used when the game's cast bar cannot be read)
     cast_lockout     = 1.0,         -- seconds after a cast or ability before the next one can start
-    cast             = false,       -- true = a click really casts (/ma, /ja). Off until you turn it on. Ignored in demo mode.
     demo_fill        = false,       -- live data, but empty alliance slots are filled with demo members (log-only clicks)
     demo_alliance_debuffs = false,  -- demo only: pretend alliance debuffs are visible
 
     mode             = 'party',     -- party (6) | alliance1 (12) | alliance2 (18)
     orientation      = 'columns',   -- columns | stacked | rows
-    hide_empty_groups = true,
-    show_empty_slots = true,
 
     auto_scale       = true,        -- scale follows the game window height (1080 = 1.0, 2160 = 2.0)
     scale            = 1.0,         -- user multiplier on top of auto scale (or absolute when auto is off)
@@ -84,12 +80,6 @@ chconfig.defaults = {
     flyout_icons     = false,       -- flyout buttons show the spell's game icon (status icon / your own PNG) instead of text
     flyout           = true,        -- hover a member to open their spell flyout
     spell_order      = {},          -- group -> ordered spell keys (same for every member); empty = job default
-    spellbar         = false,       -- optional shared spell bar under the rows
-    bar_tab          = 'heal',      -- heal | cleanse | buff | raise
-    cell_binds       = false,       -- plain clicks on a row cast the bound spell (see bindings)
-    buff_mode        = false,       -- spell row shows buffs instead of heals/cleanses
-
-    bindings         = {},          -- click-binding overrides: slot -> spell key | 'cleanse' | '-'
 
     colors           = 'modern',    -- modern | mono | colorblind
 
@@ -108,7 +98,6 @@ chconfig.enums = {
     orientation = { 'columns', 'stacked', 'rows' },
     colors      = { 'modern', 'job', 'mono', 'colorblind' },
     skin        = { 'solid', 'hairline' },
-    bar_tab     = { 'heal', 'cleanse', 'buff', 'raise' },
 }
 
 local function contains(list, v)
@@ -152,7 +141,9 @@ function chconfig.sanitize(s)
     s.scale      = clamp(s.scale, 0.5, 4.0, d.scale)
     s.ui_zoom    = math.floor(clamp(s.ui_zoom, 60, 300, d.ui_zoom) + 0.5)
     s.font_mult  = clamp(s.font_mult, 0.6, 2.0, d.font_mult)
-    s.slant = nil; s.job_icon = nil   -- options that no longer exist
+    s.slant = nil; s.job_icon = nil; s.cast = nil   -- options that no longer exist
+    s.spellbar = nil; s.bar_tab = nil; s.cell_binds = nil; s.buff_mode = nil; s.bindings = nil
+    s.hide_empty_groups = nil; s.show_empty_slots = nil
     s.fly_btn    = math.floor(clamp(s.fly_btn, 24, 64, d.fly_btn) + 0.5)
     s.fly_gap    = math.floor(clamp(s.fly_gap, 2, 16, d.fly_gap) + 0.5)
     s.fast_cast  = math.floor(clamp(s.fast_cast, 0, 80, d.fast_cast) + 0.5)
@@ -234,11 +225,7 @@ function chconfig.sanitize(s)
             s.spell_order[group] = (#clean > 0) and clean or nil
         end
     end
-    if type(s.bindings) ~= 'table' then s.bindings = {} end
-    for slot, v in pairs(s.bindings) do
-        if not bindings.is_slot(slot) or not bindings.valid_value(v) then s.bindings[slot] = nil end
-    end
-    for _, k in ipairs({ 'flyout', 'spellbar', 'cell_binds', 'show_buff_bar', 'buffs_mine_only', 'buff_mode', 'cast', 'queue_clicks', 'show_mp_pct', 'mouse_fix', 'triage', 'demo_fill', 'flyout_icons', 'show_header', 'group_frames' }) do
+    for _, k in ipairs({ 'flyout', 'show_buff_bar', 'buffs_mine_only', 'queue_clicks', 'show_mp_pct', 'mouse_fix', 'triage', 'demo_fill', 'flyout_icons', 'show_header', 'group_frames' }) do
         s[k] = s[k] and true or false
     end
     return s

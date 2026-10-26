@@ -12,3 +12,5 @@ config/
 .DS_Store
 Thumbs.db
 docs/
+preview_config_json/
+preview_config_png/

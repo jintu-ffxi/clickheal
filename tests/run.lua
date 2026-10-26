@@ -363,7 +363,6 @@ test('commands: parsing', function()
     commands.run({ '/ch', 'show' }, s); eq(s.visible, true)
     commands.run({ '/ch', 'demo', 'off' }, s); eq(s.demo, false)
     commands.run({ '/ch', 'demo' }, s); eq(s.demo, true, 'no argument toggles')
-    commands.run({ '/ch', 'alerts', 'off' }, s); eq(s.alerts.enabled, false)
     s.colors = 'colorblind'; chconfig.sanitize(s); eq(s.colors, 'colorblind')
     local unk = commands.run({ '/ch', 'frobnicate' }, s); truthy(unk.messages[1]:find('Unknown'))
     truthy(#commands.run({ '/ch', 'help' }, s).messages >= 8)
@@ -542,7 +541,7 @@ test('frame: builds geometry, alerts and a centered default alert position', fun
     near(fr.alert_pos.x, (1920 - fr.abar.w) / 2, 1)
     eq(fr.preset_name, 'WHM')
     -- alliance 2 is only partly filled; hide_empty keeps it because members exist
-    local cfg2 = new_cfg({ mode = 'alliance2', hide_empty_groups = true })
+    local cfg2 = new_cfg({ mode = 'alliance2' })
     eq(#frame.build(cfg2, demo, 3.0, 1920, 1080, {}).groups, 3)
 end)
 
@@ -579,20 +578,6 @@ test('buffs: "mine only" keeps what the job can cast; no buff data shows nothing
     eq(buffs.recast_spell('haste', spells.presets.SCH), nil)
 end)
 
-test('ui: header mode switch emits a toggle event and actions flips the setting', function()
-    local cfg = new_cfg({ mode = 'party', flyout = false })
-    local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f0)
-    local hb = find_hitbox(f0.hitboxes, function(h) return h.kind == 'mode' end)
-    truthy(hb, 'mode switch present for WHM')
-    local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(hb.x + 2, hb.y + 2, 'left'))
-    ui.draw_roster(f)
-    eq(#f.events, 1); eq(f.events[1].type, 'toggle')
-    local changed = false
-    local res = actions.perform(f.events[1], { cfg = cfg, changed = function() changed = true end, dismissed = {}, now = 0, log = function() end, roster_by_slot = {} })
-    eq(res, 'toggled'); eq(cfg.buff_mode, true); truthy(changed)
-end)
-
 test('ui: debuff chips are short tags with no countdown; the hover list has the times', function()
     for _, style in ipairs({ 'strip' }) do
         local cfg = new_cfg({ style = style, mode = 'party', show_timers = true })
@@ -610,53 +595,8 @@ test('ui: debuff chips are short tags with no countdown; the hover list has the 
 end)
 
 -- =============================================================================================
--- grid / strip layouts and click bindings
+-- strip layouts
 -- =============================================================================================
-local bindings = require('ch.bindings')
-
-test('bindings: slot names, parsing, validation', function()
-    eq(bindings.slot_name('left', {}), 'left')
-    eq(bindings.slot_name('right', { shift = true }), 'shift_right')
-    eq(bindings.slot_name('left', { shift = true, ctrl = true }), 'ctrl_left', 'ctrl beats shift')
-    eq(bindings.slot_name('left', { alt = true, shift = true }), 'alt_left')
-    eq(bindings.slot_name('middle', { shift = true }), 'middle')
-    eq(bindings.parse_slot('shift+rmb'), 'shift_right'); eq(bindings.parse_slot('LMB'), 'left')
-    eq(bindings.parse_slot('ctrl+left'), 'ctrl_left'); eq(bindings.parse_slot('shift+mmb'), nil)
-    eq(bindings.parse_slot('nope'), nil)
-    truthy(bindings.valid_value('cure4')); truthy(bindings.valid_value('cleanse')); truthy(bindings.valid_value('-'))
-    truthy(not bindings.valid_value('cure9'))
-end)
-
-test('bindings: every preset binding names a real spell; overrides layer on top', function()
-    for name, p in pairs(spells.presets) do
-        for _, set in ipairs({ 'bindings', 'buff_bindings' }) do
-            for slot, v in pairs(p[set] or {}) do
-                truthy(bindings.is_slot(slot), name .. ' bad slot ' .. slot)
-                truthy(bindings.valid_value(v), name .. '.' .. set .. ' bad value ' .. tostring(v))
-            end
-        end
-    end
-    local cfg = new_cfg({ bindings = { left = 'cure3', shift_right = '-' } })
-    local eff = bindings.effective(cfg, spells.presets.WHM)
-    eq(eff.left, 'cure3'); eq(eff.shift_right, '-'); eq(eff.right, 'cure2')
-    local buff = bindings.effective(new_cfg({ buff_mode = true, bindings = { left = 'cure3' } }), spells.presets.WHM)
-    eq(buff.left, 'haste', 'buff mode ignores heal overrides')
-    local bad = chconfig.sanitize({ bindings = { left = 'cure99', bogus = 'cure1', right = 'cure1' } })
-    eq(bad.bindings.left, nil); eq(bad.bindings.bogus, nil); eq(bad.bindings.right, 'cure1')
-end)
-
-test('bindings: resolve handles cleanse, KO and none', function()
-    local whm = spells.presets.WHM
-    local doom = { name = 'T', has_buff_data = true, debuffs = { 'poison', 'doom' } }
-    eq(bindings.resolve('cleanse', doom, whm, 'middle'), 'cursna', 'worst debuff first')
-    local k, why = bindings.resolve('cleanse', { name = 'H', has_buff_data = true, debuffs = {} }, whm, 'middle')
-    eq(k, nil); truthy(why and why:find('Nothing to cleanse'))
-    eq(bindings.resolve('cure4', { name = 'K', dead = true }, whm, 'left'), 'raise3')
-    eq(bindings.resolve('cure4', { name = 'K', dead = true }, whm, 'right'), 'raise1')
-    eq(bindings.resolve('cure4', { name = 'K', dead = true }, spells.presets.PLD, 'left'), nil)
-    eq(bindings.resolve('-', { name = 'A' }, whm, 'left'), nil)
-    eq(bindings.resolve('cure4', { name = 'A' }, whm, 'left'), 'cure4')
-end)
 
 local function cell_click(cfg, slot, button, mods, groups_mode)
     cfg.mode = groups_mode or cfg.mode
@@ -669,37 +609,6 @@ local function cell_click(cfg, slot, button, mods, groups_mode)
     return f.events, f
 end
 
-test('ui: grid click casting follows the bindings (button, modifier, cleanse, KO)', function()
-    for _, style in ipairs({ 'strip' }) do
-        local cfg = new_cfg({ style = style, mode = 'alliance1', cell_binds = true })
-        local function spell_of(slot, button, mods)
-            local ev = cell_click(cfg, slot, button, mods)
-            eq(#ev, 1, style .. ' one event'); return ev[1]
-        end
-        eq(spell_of(1, 'left').spell, 'cure4')
-        eq(spell_of(1, 'right').spell, 'cure2')
-        eq(spell_of(1, 'left', { shift = true }).spell, 'cure5')
-        eq(spell_of(1, 'right', { shift = true }).spell, 'cure1')
-        eq(spell_of(1, 'left', { ctrl = true }).spell, 'curaga3')
-        eq(spell_of(3, 'middle').spell, 'cursna', 'Torvald has doom')
-        eq(spell_of(2, 'middle').spell, 'silena', 'Kessia is silenced')
-        local ko = spell_of(10, 'left'); eq(ko.spell, 'raise3'); eq(ko.slot, 10)
-        eq(spell_of(5, 'left').state, 'range', 'Dunstan is out of range; the event says so')
-        local ev = cell_click(cfg, 1, 'middle')
-        eq(#ev, 1); eq(ev[1].type, 'note', 'nothing to cleanse on a healthy member')
-    end
-end)
-
-test('ui: grid hover shows the bindings tooltip; no hover = nothing', function()
-    local cfg = new_cfg({ style = 'grid', mode = 'party', cell_binds = true })
-    local _, f = cell_click(cfg, 1, nil)
-    truthy(f.tooltip and #f.tooltip >= 3, 'tooltip lines')
-    truthy(f.tooltip[2]:find('LMB: Cure IV'), f.tooltip[2])
-    local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f0)
-    eq(f0.tooltip, nil)
-end)
-
 test('ui: grid and strip text stays inside its cell at 1080p and 4K', function()
     for _, style in ipairs({ 'strip' }) do
         for _, h in ipairs({ 1080, 2160 }) do
@@ -707,7 +616,7 @@ test('ui: grid and strip text stays inside its cell at 1080p and 4K', function()
             local f, fr, g = build_ui_frame(cfg, h, 3.0)
             ui.draw_roster(f)
             for _, c in ipairs(g.cmds) do
-                if c.op == 'text' and c.y > fr.geom.header_h + fr.geom.label_h and (not fr.geom.bar or c.y < fr.geom.bar.y) then
+                if c.op == 'text' and c.y > fr.geom.header_h + fr.geom.label_h and true then
                     local w = g.text_size(c.s)
                     local inside = false
                     for _, card in pairs(fr.geom.cards) do
@@ -779,123 +688,6 @@ local function bar_frame(cfg, input)
 end
 
 local function hb_of(f, pred) return find_hitbox(f.hitboxes, pred) end
-
-test('layout: spell bar sits below the cells inside the panel, and scales with resolution', function()
-    for _, style in ipairs({ 'strip' }) do
-        local g = layout.compute({ style = style, orientation = 'columns', groups = { 0 }, spellbar = true }, 1080)
-        truthy(g.bar, 'bar present')
-        truthy(g.bar.y >= g.header_h + 6 * g.card_h, 'below the cells')
-        truthy(g.bar.x + g.bar.w <= g.width and g.bar.y + g.bar.h <= g.height, 'inside the panel')
-        truthy(g.bar.btn >= 24, 'tiles stay clickable')
-        local g4 = layout.compute({ style = style, orientation = 'columns', groups = { 0 }, spellbar = true }, 2160)
-        near(g4.width / 3840, g.width / 1920, 0.005); near(g4.height / 2160, g.height / 1080, 0.005)
-        eq(layout.compute({ style = style, orientation = 'columns', groups = { 0 }, spellbar = false }, 1080).bar, nil)
-    end
-end)
-
-test('spells: bar tabs only name real spells; empty tabs are hidden', function()
-    for name, p in pairs(spells.presets) do
-        for _, tab in ipairs(spells.bar_tabs(p)) do
-            truthy(#tab.keys > 0)
-            for _, key in ipairs(tab.keys) do truthy(spells.defs[key], name .. ' bar names unknown ' .. key) end
-        end
-    end
-    eq(#spells.bar_tabs(spells.presets.PLD), 1)
-    eq(#spells.bar_tabs(spells.presets.WHM), 4)
-    truthy(spells.sticky(spells.defs.cure4) and spells.sticky(spells.defs.curaga2))
-    truthy(not spells.sticky(spells.defs.erase) and not spells.sticky(spells.defs.haste))
-end)
-
-test('ui: pick a cure on the bar, then click members - cure stays armed, right click cancels', function()
-    for _, style in ipairs({ 'strip' }) do
-        local cfg = new_cfg({ style = style, mode = 'party', spellbar = true })
-        local f0 = bar_frame(cfg)
-        eq(ui.state.armed, nil)
-        local tile = hb_of(f0, function(h) return h.kind == 'bar_tile' and h.key == 'cure3' end)
-        truthy(tile, 'cure3 tile')
-        bar_frame(cfg, gfx_rec.input(tile.x + 2, tile.y + 2, 'left'))
-        eq(ui.state.armed, 'cure3', 'clicking a tile arms it')
-
-        local cell = hb_of(f0, function(h) return h.kind == 'cell' and h.slot == 1 end)
-        local f1 = bar_frame(cfg, gfx_rec.input(cell.x + 3, cell.y + 3, 'left'))
-        eq(#f1.events, 1); eq(f1.events[1].spell, 'cure3'); eq(f1.events[1].slot, 1); eq(f1.events[1].via, 'bar')
-        eq(ui.state.armed, 'cure3', 'cures stay armed for the next patient')
-        local f2 = bar_frame(cfg, gfx_rec.input(cell.x + 3, cell.y + 3, 'left'))
-        eq(#f2.events, 1, 'second click casts again')
-
-        local f3 = bar_frame(cfg, gfx_rec.input(cell.x + 3, cell.y + 3, 'right'))
-        eq(#f3.events, 0); eq(ui.state.armed, nil, 'right click disarms without casting')
-    end
-end)
-
-test('ui: non-cure spells are one-shot; unarmed plain clicks do nothing unless cell_binds is on', function()
-    local cfg = new_cfg({ style = 'grid', mode = 'party', spellbar = true })
-    local f0 = bar_frame(cfg)
-    local cell = hb_of(f0, function(h) return h.kind == 'cell' and h.slot == 2 end)
-    local f = bar_frame(cfg, gfx_rec.input(cell.x + 3, cell.y + 3, 'left'))
-    eq(#f.events, 0, 'nothing armed, cell_binds off')
-
-    cfg.bar_tab = 'cleanse'
-    local f1 = bar_frame(cfg)
-    local tile = hb_of(f1, function(h) return h.kind == 'bar_tile' and h.key == 'silena' end)
-    bar_frame(cfg, gfx_rec.input(tile.x + 2, tile.y + 2, 'left'))
-    eq(ui.state.armed, 'silena')
-    local f2 = bar_frame(cfg, gfx_rec.input(cell.x + 3, cell.y + 3, 'left'))
-    eq(#f2.events, 1); eq(f2.events[1].spell, 'silena')
-    eq(ui.state.armed, nil, 'one-shot spells disarm after casting')
-
-    local cfg2 = new_cfg({ style = 'grid', mode = 'party', cell_binds = true, spellbar = true })
-    local f3 = bar_frame(cfg2)
-    local c3 = hb_of(f3, function(h) return h.kind == 'cell' and h.slot == 2 end)
-    local f4 = bar_frame(cfg2, gfx_rec.input(c3.x + 3, c3.y + 3, 'left'))
-    eq(#f4.events, 1); eq(f4.events[1].spell, 'cure4', 'cell_binds restores quick casting')
-end)
-
-test('ui: clicking a tab emits the switch; the armed spell can be cast out of range and says so', function()
-    local cfg = new_cfg({ style = 'strip', mode = 'party', spellbar = true })
-    local f0 = bar_frame(cfg)
-    local tab = hb_of(f0, function(h) return h.kind == 'bar_tab' and h.id == 'buff' end)
-    truthy(tab)
-    local f = bar_frame(cfg, gfx_rec.input(tab.x + 2, tab.y + 2, 'left'))
-    eq(#f.events, 1); eq(f.events[1].type, 'toggle'); eq(f.events[1].what, 'bar_tab'); eq(f.events[1].value, 'buff')
-    local ctx = { cfg = cfg, changed = function() end, dismissed = {}, now = 0, log = function() end, roster_by_slot = {} }
-    eq(actions.perform(f.events[1], ctx), 'toggled'); eq(cfg.bar_tab, 'buff')
-
-    cfg.bar_tab = 'heal'
-    local f1 = bar_frame(cfg)
-    local tile = hb_of(f1, function(h) return h.kind == 'bar_tile' and h.key == 'cure2' end)
-    bar_frame(cfg, gfx_rec.input(tile.x + 2, tile.y + 2, 'left'))
-    local far = hb_of(f1, function(h) return h.kind == 'cell' and h.slot == 5 end)   -- Dunstan, 24y
-    local f2 = bar_frame(cfg, gfx_rec.input(far.x + 3, far.y + 3, 'left'))
-    eq(#f2.events, 1); eq(f2.events[1].state, 'range')
-end)
-
-test('ui: the CLEAN tab flags what the party needs (dot on the tab, outline on the tile)', function()
-    local cfg = new_cfg({ style = 'strip', mode = 'party', bar_tab = 'cleanse', spellbar = true })
-    local f, fr, g = bar_frame(cfg)
-    -- Kessia is silenced, Miraeth paralysed, Torvald doomed, Dunstan poisoned+blind -> tiles are outlined.
-    local outlined = 0
-    local tiles = {}
-    for _, h in ipairs(f.hitboxes) do if h.kind == 'bar_tile' then tiles[#tiles + 1] = h end end
-    truthy(#tiles >= 8)
-    for _, cmd in ipairs(g.cmds) do
-        if cmd.op == 'rect' and cmd.w and cmd.h and cmd.w >= 20 then
-            for _, h in ipairs(tiles) do
-                if cmd.x == h.x and cmd.y == h.y and cmd.w == h.w and cmd.h == 2 * 1 then outlined = outlined + 1 end
-            end
-        end
-    end
-    -- (outline thickness is 2 px at 1080p: top edge rects have h == 2)
-    truthy(outlined >= 4, 'needed tiles are outlined, got ' .. outlined)
-end)
-
-test('commands: bar, tab, cellbinds', function()
-    local s = new_cfg({})
-    commands.run({ '/ch', 'bar', 'off' }, s); eq(s.spellbar, false)
-    commands.run({ '/ch', 'tab', 'cleanse' }, s); eq(s.bar_tab, 'cleanse')
-    commands.run({ '/ch', 'tab', 'nope' }, s); eq(s.bar_tab, 'cleanse')
-    commands.run({ '/ch', 'cellbinds', 'on' }, s); eq(s.cell_binds, true)
-end)
 
 -- =============================================================================================
 -- hover flyout, slanted strip rows, spell order
@@ -1017,18 +809,6 @@ test('spell order: custom order applies to the flyout for every member; bad keys
     eq(spells.group_keys(new_cfg({}), spells.presets.WHM, 'ability')[1], 'divine_seal')
 end)
 
-test('commands: flyout and order', function()
-    local s = new_cfg({})
-    commands.run({ '/ch', 'flyout', 'off' }, s); eq(s.flyout, false)
-    commands.run({ '/ch', 'order', 'heal', 'cure1', 'curaga2', 'cure4' }, s)
-    eq(#s.spell_order.heal, 3); eq(s.spell_order.heal[2], 'curaga2')
-    local r = commands.run({ '/ch', 'order', 'heal', 'cure1', 'nope' }, s)
-    eq(#s.spell_order.heal, 3, 'bad key rejects the whole change'); truthy(#r.messages > 0)
-    eq(commands.run({ '/ch', 'order', 'heal' }, s).show_order, 'heal')
-    commands.run({ '/ch', 'order', 'heal', 'reset' }, s); eq(s.spell_order.heal, nil)
-    truthy(#commands.run({ '/ch', 'order', 'zzz' }, s).messages > 0)
-end)
-
 -- =============================================================================================
 -- 75-cap catalog: levels, sub-job fit, self-only spells, per-job presets
 -- =============================================================================================
@@ -1041,9 +821,6 @@ test('catalog: every preset key exists and every spell has a button label that f
         for g, l in pairs(p.bar or {}) do lists[#lists + 1] = l end
         for _, l in ipairs(lists) do
             for _, k in ipairs(l) do truthy(spells.defs[k], name .. ' preset names unknown spell ' .. k) end
-        end
-        for _, b in ipairs({ p.bindings or {}, p.buff_bindings or {} }) do
-            for slot, v in pairs(b) do truthy(v == 'cleanse' or spells.defs[v], name .. ' binding ' .. slot) end
         end
     end
     for k, d in pairs(spells.defs) do
@@ -1084,7 +861,7 @@ test('catalog: fit() cuts presets down and falls back to lower tiers', function(
     local blm = spells.fit(spells.presets.BLM, who(J.BLM, 75))
     eq(#blm.bar.heal, 0, 'BLM with no sub job has no heals'); eq(blm.self[1], 'manafont')
     local rdm = spells.fit(spells.presets.RDM, who(J.RDM, 75))
-    eq(#rdm.bar.cleanse, 0); eq(#spells.bar_tabs(rdm), 3, 'RDM has heal, buff, raise tabs')
+    eq(#rdm.bar.cleanse, 0)
     eq(spells.fit(spells.presets.WHM, { job = 3 }), spells.presets.WHM, 'no level: untouched')
 end)
 
@@ -1171,12 +948,12 @@ test('game source: reads your party from Ashita memory in the member shape (read
     _G.AshitaCore = nil
     eq(#game.roster(0, {}), 0, 'not logged in: empty roster, no error')
 end)
-test('casting: off by default, and only a ready click with cast on and demo off sends a command', function()
+test('casting: a ready click on a real party sends a command; demo data never does', function()
     eq(actions.command_for(spells.defs.cure4, '<p2>'), '/ma "Cure IV" <p2>')
     eq(actions.command_for(spells.defs.stoneskin, '<p2>'), '/ma "Stoneskin" <me>', 'self-only spell goes to you')
     eq(actions.command_for(spells.defs.divine_seal, '<p2>'), '/ja "Divine Seal" <me>')
     eq(actions.command_for(spells.defs.devotion, '<p2>'), '/ja "Devotion" <p2>', 'target ability keeps the member')
-    eq(new_cfg({}).cast, false, 'casting defaults to off')
+    eq(new_cfg({}).cast, nil, 'there is no casting switch any more')
     local sent, logged = {}, {}
     local function ctx(cfg, demo_on)
         return { cfg = cfg, now = 0, dismissed = {}, roster_by_slot = { [2] = { name = 'Bob' } },
@@ -1184,14 +961,11 @@ test('casting: off by default, and only a ready click with cast on and demo off 
             log = function(t) logged[#logged + 1] = t end }
     end
     local ev = { type = 'cast', slot = 2, spell = 'cure4', state = 'ready' }
-    eq(actions.perform(ev, ctx({ cast = false }, false)), 'cast'); eq(#sent, 0, 'cast off: nothing sent')
-    eq(actions.perform(ev, ctx({ cast = true }, true)), 'cast'); eq(#sent, 0, 'demo on: nothing sent')
-    eq(actions.perform({ type = 'cast', slot = 2, spell = 'cure4', state = 'range', detail = 30 }, ctx({ cast = true }, false)), 'blocked')
+    eq(actions.perform(ev, ctx({}, true)), 'cast'); eq(#sent, 0, 'demo on: nothing sent')
+    eq(actions.perform({ type = 'cast', slot = 2, spell = 'cure4', state = 'range', detail = 30 }, ctx({}, false)), 'blocked')
     eq(#sent, 0, 'blocked click: nothing sent')
-    eq(actions.perform(ev, ctx({ cast = true }, false)), 'sent'); eq(sent[1], '/ma "Cure IV" <p2>')
-    local s = new_cfg({})
-    commands.run({ '/ch', 'cast', 'on' }, s); eq(s.cast, true)
-    commands.run({ '/ch', 'cast', 'off' }, s); eq(s.cast, false)
+    eq(actions.perform(ev, ctx({}, false)), 'sent'); eq(sent[1], '/ma "Cure IV" <p2>')
+    truthy(commands.run({ '/ch', 'cast', 'on' }, new_cfg({})).messages[1]:find('Unknown'), '/ch cast is gone')
 end)
 
 test('recast: countdown text, game timers by key, and a bigger configurable flyout', function()
@@ -1222,8 +996,6 @@ test('recast: countdown text, game timers by key, and a bigger configurable flyo
     truthy(big.btn == 48 and big.w > small.w, 'setting changes the size')
     local c = new_cfg({}); c.fly_btn = 999; c.fly_gap = 0; chconfig.sanitize(c)
     eq(c.fly_btn, 64); eq(c.fly_gap, 2)
-    local cmd = new_cfg({}); commands.run({ '/ch', 'buttons', '44', '8' }, cmd)
-    eq(cmd.fly_btn, 44); eq(cmd.fly_gap, 8)
 end)
 
 test('recast: a tile on cooldown shows its time instead of its label', function()
@@ -1402,14 +1174,15 @@ test('chconfig: row and icon sizes are clamped and the layout settings are gone'
     eq(chconfig.defaults.style, nil); eq(chconfig.defaults.show_job, nil); eq(chconfig.defaults.job_style, nil)
 end)
 
-test('commands: rowsize, icons, buffbar, mybuffs, buffmode', function()
+test('commands: rowsize, icons, buffbar, mybuffs, retired commands', function()
     local s = new_cfg({})
     s.row_w, s.row_h = 300, 56; chconfig.sanitize(s); eq(s.row_w, 300); eq(s.row_h, 56)
     s.row_w, s.row_h = 9999, 1; chconfig.sanitize(s); eq(s.row_w, 360); eq(s.row_h, 24)
     s.debuff_icon, s.buff_icon = 20, 16; chconfig.sanitize(s); eq(s.debuff_icon, 20); eq(s.buff_icon, 16)
     s.debuff_icon = 99; chconfig.sanitize(s); eq(s.debuff_icon, 32)
-    commands.run({ '/ch', 'buffmode', 'buff' }, s); eq(s.buff_mode, true)
-    commands.run({ '/ch', 'buffmode' }, s); eq(s.buff_mode, false, 'no arg toggles')
+    for _, gone in ipairs({ 'buffmode', 'bar', 'tab', 'cellbinds', 'flyout', 'buttons', 'order', 'alerts', 'inputdebug' }) do
+        truthy(commands.run({ '/ch', gone, 'on' }, s).messages[1]:find('Unknown'), '/ch ' .. gone .. ' is gone')
+    end
     truthy(commands.run({ '/ch', 'layout', 'full' }, s).messages[1]:find('Unknown'), 'layouts are gone')
 end)
 
@@ -1465,23 +1238,6 @@ test('ui: icon size settings change the drawn icons; rows resize with the settin
     truthy(small[12] and not small[24], 'small icons drawn at 12')
     truthy(big[24] and not big[12], 'big icons drawn at 24')
     eq(fr.geom.card_w, 300); eq(fr.geom.card_h, 60)
-end)
-
-test('ui: a locked plain row click casts the binding; unlocked and far-away clicks do nothing', function()
-    local function events(over, at_cell)
-        local cfg = new_cfg(over)
-        local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
-        ui.draw_roster(f0)
-        local cell = find_hitbox(f0.hitboxes, function(h) return h.kind == 'cell' and h.slot == 1 end)
-        local x, y = cell.x + 3, cell.y + 3
-        if not at_cell then x, y = 5000, 5000 end
-        local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(x, y, 'left', {}, over.locked ~= false))
-        ui.draw_roster(f)
-        return f.events
-    end
-    eq(#events({ mode = 'party', cell_binds = true }, true), 1)
-    eq(#events({ mode = 'party', cell_binds = true, locked = false }, true), 0, 'unlocked must not cast')
-    eq(#events({ mode = 'party', cell_binds = true }, false), 0, 'mouse elsewhere is ignored')
 end)
 
 test('flyout: clicks resolve the tier asked for, and an out-of-range member reports range', function()
@@ -1627,8 +1383,8 @@ test('commands: /ch status reports the switches and explains why the hover would
     local s = new_cfg({ locked = false, flyout = false })
     local msgs = commands.run({ '/ch', 'status' }, s).messages
     local joined = table.concat(msgs, '\n')
-    truthy(joined:find('locked: off', 1, true) and joined:find('hover flyout: off', 1, true))
-    truthy(joined:find('/ch lock', 1, true) and joined:find('/ch flyout on', 1, true))
+    truthy(joined:find('locked: off', 1, true) and joined:find('hover menu: off', 1, true))
+    truthy(joined:find('/ch lock', 1, true) and joined:find('Spells page', 1, true))
     local ok = table.concat(commands.run({ '/ch', 'status' }, new_cfg({})).messages, '\n')
     truthy(not ok:find('/ch lock', 1, true), 'no warning when everything is fine')
 end)
@@ -2062,8 +1818,8 @@ test('debug page: sample status effects work on any roster, and the triage list 
         return fr.roster_list, cfg
     end
     -- default demo alliance members have no visible debuffs; the switch gives everyone some
-    local plain = roster({ mode = 'alliance2' })
-    local forced = roster({ mode = 'alliance2', debug = { force_debuffs = true, force_buffs = true } })
+    local plain = roster({ mode = 'alliance2', demo = true })
+    local forced = roster({ mode = 'alliance2', demo = true, debug = { force_debuffs = true, force_buffs = true } })
     local function with_debuffs(list) local n = 0; for _, m in ipairs(list) do if m.active and #m.debuffs > 0 then n = n + 1 end end return n end
     local living = 0
     for _, m in ipairs(forced) do if m.active and not m.dead then living = living + 1 end end
@@ -2076,7 +1832,13 @@ test('debug page: sample status effects work on any roster, and the triage list 
     local tall = layout.compute({ triage = true, triage_n = 4, tri_list_h = 18, tri_list_icons = true, debuff_icon = 14, buff_icon = 14 }, 1080)
     truthy(tall.tri.list.row > short.tri.list.row * 2, 'rows grow when icons are shown')
     -- and the icons really are drawn under the names with demo debuffs forced
-    local cfg = new_cfg({ mode = 'alliance1', triage = true, debug = { force_debuffs = true },
+    -- a live party is never given sample statuses, whatever the switches say
+    local real = { { slot = 1, active = true, name = 'Real', hpp = 50, debuffs = {}, buffs = {}, has_buff_data = true } }
+    local live_cfg = new_cfg({ demo = false, debug = { force_debuffs = true, force_buffs = true } })
+    truthy(frame.apply_debug(real, live_cfg) == real, 'a live party is never given sample statuses')
+    live_cfg.demo = true
+    eq(#frame.apply_debug(real, live_cfg)[1].debuffs > 0 and 1 or 0, 1, 'demo mode applies them')
+    local cfg = new_cfg({ mode = 'alliance1', triage = true, demo = true, debug = { force_debuffs = true },
         triage_opts = { list_icons = true, list_h = 18 } })
     local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
     ui.draw_roster(f)
@@ -2142,6 +1904,77 @@ test('resize: dragging a corner fits the panel to the box, re-flowing the partie
     local one, fr1 = build_ui_frame(new_cfg({ mode = 'party', orientation = 'columns', locked = false }), 1080, 3.0)
     one.groups, one.disp_h = fr1.groups, 1080
     eq(ui.fit_box(one, 3000, 3000).orientation, 'columns')
+end)
+
+-- =============================================================================================
+-- livebuffs: other members' status effects from the server's packets
+-- =============================================================================================
+
+local live = require('ch.livebuffs')
+
+local function u32le(v) return string.char(v % 256, math.floor(v / 256) % 256, math.floor(v / 65536) % 256, math.floor(v / 16777216) % 256) end
+
+--- A 0x076 packet with one member: effect ids in order, high bits in the mask.
+local function party_buff_packet(uid, effects)
+    local mask, buffs = { 0, 0, 0, 0, 0, 0, 0, 0 }, {}
+    for i = 1, 32 do
+        local e = effects[i]
+        if e then
+            buffs[i] = string.char(e % 256)
+            local hi = math.floor(e / 256)
+            local byte, shift = math.floor((i - 1) / 4) + 1, ((i - 1) % 4) * 2
+            mask[byte] = mask[byte] + hi * 2 ^ shift
+        else
+            buffs[i] = string.char(255)
+        end
+    end
+    local mbytes = {}
+    for i = 1, 8 do mbytes[i] = string.char(math.floor(mask[i])) end
+    local entry = u32le(uid) .. '\1\0\0\0' .. table.concat(mbytes) .. table.concat(buffs)
+    return string.rep('\0', 4) .. entry .. string.rep('\0', 48 * 4)
+end
+
+test('livebuffs: a party status packet gives the effect ids, including ones above 255', function()
+    live.reset()
+    truthy(live.feed(0x076, party_buff_packet(0x01020304, { 3, 33, 257 })))
+    local ids = live.get(0x01020304)
+    eq(#ids, 3); eq(ids[1], 3); eq(ids[2], 33); eq(ids[3], 257)
+    eq(live.get(999), nil, 'unknown members have no packet data (the chat log is the fallback)')
+    eq(live.count(), 1)
+    truthy(not live.feed(0x076, 'short'), 'a truncated packet is ignored')
+    truthy(not live.feed(0x076, nil), 'garbage is ignored')
+end)
+
+test('livebuffs: a wear-off message drops the effect at once; a zone change forgets everyone', function()
+    live.reset()
+    live.feed(0x076, party_buff_packet(77, { 3, 33 }))
+    local msg = string.rep('\0', 8) .. u32le(77) .. u32le(33) .. string.rep('\0', 8) .. string.char(206, 0) .. string.rep('\0', 4)
+    truthy(live.feed(0x029, msg))
+    local ids = live.get(77); eq(#ids, 1); eq(ids[1], 3)
+    truthy(not live.feed(0x029, msg), 'already gone')
+    live.feed(0x00A, string.rep('\0', 8))
+    eq(live.get(77), nil); eq(live.count(), 0)
+end)
+
+test('source_game: effect ids become debuff keys and buffs', function()
+    local game = require('ch.source_game')
+    local d, b = game.classify({ 3, 33, 33, 200 })
+    eq(#d, 1, 'poison'); eq(d[1], 'poison')
+    eq(#b, 1, 'haste once'); eq(b[1].key, 'haste')
+end)
+
+test('triage: the featured member shows their health percent, not a deficit or ALL FULL', function()
+    local cfg = new_cfg({ mode = 'party', triage = true, demo = true })
+    local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+    ui.draw_roster(f)
+    local pct, bad = false, false
+    for _, c in ipairs(g.cmds) do
+        if c.op == 'text' then
+            if c.s:match('^%d+%%$') then pct = true end
+            if c.s == 'ALL FULL' or c.s:match('^%-%d+$') then bad = true end
+        end
+    end
+    truthy(pct, 'a percent is shown'); truthy(not bad, 'no deficit text')
 end)
 
 print(string.format('\n%d passed, %d failed', passed, failed))

@@ -14,7 +14,6 @@ local debuffs  = require('ch.debuffs')
 local spells   = require('ch.spells')
 local layout   = require('ch.layout')
 local fonts    = require('ch.fonts')
-local bindings = require('ch.bindings')
 
 local M = {}
 
@@ -155,7 +154,8 @@ end
 local function set_columns(avail)
     full_w = math.max(120 * sc, math.floor(avail - MARGIN * sc))
     stacked = full_w < 360 * sc
-    label_w = math.min(math.floor(full_w * 0.46), math.max(120 * sc, math.floor(widest_prev + 14 * sc)))
+    -- A proportional gap as well as a fixed one: with scaled fonts the measured width can run a little short.
+    label_w = math.min(math.floor(full_w * 0.46), math.max(120 * sc, math.floor(widest_prev * 1.08 + 24 * sc)))
     ctrl_w = math.max(90 * sc, math.floor(full_w - label_w))
 end
 
@@ -169,7 +169,7 @@ local function label(text, tip)
     if imgui.IsItemHovered() then
         if tip then imgui.SetTooltip(tip) elseif shown ~= text then imgui.SetTooltip(text) end
     end
-    if stacked or tw + 10 * sc > label_w then
+    if stacked or tw * 1.08 + 16 * sc > label_w then
         imgui.SetNextItemWidth(full_w)
         return full_w
     end
@@ -434,7 +434,21 @@ local function page_spells(s, ctx)
     local btns_w = 0
     for _, b in ipairs({ '^', 'v', 'x' }) do btns_w = btns_w + text_w(b) + 20 * sc + 10 * sc end
     local name_raw = full_w - btns_w - 10 * sc
-    local name_w = math.max(80 * sc, name_raw)
+    -- Names are never cut short: when the longest does not fit beside the buttons, the buttons go under the name.
+    local longest = 0
+    for _, gdef in ipairs(spells.GROUPS) do
+        for i, k in ipairs(spells.group_keys(s, preset, gdef[1], ctx.player)) do
+            local d = spells.defs[k]
+            longest = math.max(longest, text_w(string.format('%2d.  %s', i, d and d.name or k)))
+        end
+    end
+    local inline = name_raw >= longest + 8 * sc
+    local name_w = inline and name_raw or full_w
+    local function slot_button(text, id, on)
+        if on then return imgui.SmallButton(text .. '##' .. id) end
+        pcall(imgui.Dummy, { text_w(text) + 20 * sc, text_h() })   -- keeps the other buttons where they are
+        return false
+    end
 
     for _, gdef in ipairs(spells.GROUPS) do
         local id, label_text = gdef[1], gdef[2]
@@ -452,13 +466,13 @@ local function page_spells(s, ctx)
             local i = 1
             while i <= #list do
                 local def = spells.defs[list[i]]
-                imgui.Text(clip(string.format('%2d.  %s', i, def and def.name or list[i]), math.min(name_w, full_w) - 4 * sc))
-                if name_raw >= 60 * sc then imgui.SameLine(name_w + 6 * sc) end   -- too narrow: the buttons wrap below the name
-                if i > 1 and imgui.SmallButton(string.format('^##up_%s_%d', id, i)) then
+                imgui.Text(clip(string.format('%2d.  %s', i, def and def.name or list[i]), name_w - 4 * sc))
+                if inline then imgui.SameLine(name_w + 6 * sc) end
+                if slot_button('^', string.format('up_%s_%d', id, i), i > 1) then
                     list[i], list[i - 1] = list[i - 1], list[i]; edited = true
                 end
                 imgui.SameLine()
-                if i < #list and imgui.SmallButton(string.format('v##dn_%s_%d', id, i)) then
+                if slot_button('v', string.format('dn_%s_%d', id, i), i < #list) then
                     list[i], list[i + 1] = list[i + 1], list[i]; edited = true
                 end
                 imgui.SameLine()
@@ -609,14 +623,11 @@ end
 local function page_casting(s)
     local changed = false
     section('Casting')
-    changed = checkbox('Click casts the spell', s, 'cast', 'Off = a click only prints what it would cast.') or changed
     changed = checkbox('Queue clicks while casting', s, 'queue_clicks', 'A click made mid-cast is held and sent the moment you can act, so you can click spells one after another.') or changed
     if s.demo then
         warn_text('Demo data is on, so clicks never cast. Turn it off on the Debug page.')
-    elseif s.cast then
-        warn_text('Casting is ON: a click sends a normal /ma or /ja. Only use this where addons are allowed.')
     else
-        hint('Casting is off. Clicks only log what they would do.')
+        hint('A click sends a normal /ma or /ja. Only use this where addons are allowed.')
     end
 
     section('Advanced')
@@ -678,10 +689,12 @@ local function page_demo(s)
         changed = checkbox('Fill empty alliance slots', s, 'demo_fill', 'Keeps your real party live and adds fake alliance members so you can see and test the alliance layout. Clicks on fake members only log, they never cast.') or changed
     end
 
-    section('Sample status effects')
-    hint('Works on any roster, demo or real. Handy for testing the icon rows and the triage priorities.')
-    changed = checkbox('Give everyone debuffs', d, 'force_debuffs', 'Every member gets a sample set of debuffs (poison, slow, doom ...).') or changed
-    changed = checkbox('Give everyone buffs', d, 'force_buffs', 'Every member gets a sample set of buffs (haste, protect, regen ...).') or changed
+    if s.demo then
+        section('Sample status effects')
+        hint('Demo mode only. Handy for testing the icon rows and the triage priorities.')
+        changed = checkbox('Give everyone debuffs', d, 'force_debuffs', 'Every demo member gets a sample set of debuffs (poison, slow, doom ...).') or changed
+        changed = checkbox('Give everyone buffs', d, 'force_buffs', 'Every demo member gets a sample set of buffs (haste, protect, regen ...).') or changed
+    end
 
     section('Overlays and logging')
     changed = checkbox('Mouse crosshair', d, 'cursor', 'A crosshair where ImGui thinks the mouse is, with the numbers behind it. Same as /ch cursor.') or changed
@@ -689,7 +702,7 @@ local function page_demo(s)
 
     section('Commands')
     hint('/ch  /ch lock  /ch unlock  /ch scale <n|auto>  /ch mode <party|alliance1|alliance2>')
-    hint('/ch cast  /ch demo  /ch cursor  /ch partydump  /ch apicheck  /ch help')
+    hint('/ch demo  /ch cursor  /ch status  /ch partydump  /ch apicheck  /ch help')
     return changed
 end
 
@@ -739,20 +752,11 @@ local function draw_header(s)
         used = used + w
     end
 
-    local data = s.demo and 'DEMO DATA' or 'LIVE DATA'
-    place(data)
-    if toggle_button(data, not s.demo, 'data', GOOD) then
+    place('DEMO MODE')
+    if toggle_button('DEMO MODE', s.demo, 'data', WARN) then
         s.demo = not s.demo; changed = true
     end
-    if imgui.IsItemHovered() then imgui.SetTooltip('Switch between a fake demo party and your real party.') end
-
-    local casting = s.cast and not s.demo
-    local cast_text = casting and 'CASTING ON' or 'CASTING OFF'
-    place(cast_text)
-    if toggle_button(cast_text, casting, 'cast', WARN) then
-        s.cast = not s.cast; changed = true
-    end
-    if imgui.IsItemHovered() then imgui.SetTooltip(s.demo and 'Needs live data.' or 'When on, a click really casts the spell.') end
+    if imgui.IsItemHovered() then imgui.SetTooltip('On = a fake demo party that never casts. Off = your real party.') end
 
     local lock_text = s.locked and 'LOCKED' or 'UNLOCKED'
     place(lock_text)

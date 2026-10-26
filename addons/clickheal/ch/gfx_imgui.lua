@@ -304,9 +304,11 @@ end
 local image_ok = true
 function M.status_icon(x, y, size, status_id)
     if not draw_list or not image_ok then return false end
-    local tex = icons.texture(status_id)
+    local ps = px(size)
+    local tex = icons.texture(status_id, ps)
     if not tex then return false end
-    local ok = pcall(draw_list.AddImage, draw_list, tex, { px(x), px(y) }, { px(x + size), px(y + size) })
+    -- Whole pixels, and exactly the size the texture was resampled to, so every texel lands on one pixel.
+    local ok = pcall(draw_list.AddImage, draw_list, tex, { px(x), px(y) }, { px(x) + ps, px(y) + ps })
     if not ok then image_ok = false; return false end
     return true
 end

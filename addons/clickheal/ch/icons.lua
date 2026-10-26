@@ -21,29 +21,55 @@ do
     icons.ready = ok and dev ~= nil
 end
 
-local cache = {}   -- status id -> { tex = cdata, ptr = number } | false
+local cache = {}   -- "id:size" -> { tex = cdata, ptr = number } | false
+local cached_n = 0
+
+local D3DX_FILTER_TRIANGLE = 4   -- a proper averaging filter; the default one is much softer when shrinking
 
 --- ImGui texture handle (a number) for a status effect id, or nil when it cannot be loaded.
-function icons.texture(status_id)
+-- `size` (pixels) asks for the icon resampled to exactly that size, so it is drawn 1:1 instead of being
+-- squeezed by the GPU's bilinear filter (the game's icons are 32 px, the frames draw them at 14 to 60).
+-- Without `size`, or if the sized load fails, the icon is loaded at its own size. A picture named
+-- assets/status/<id>.png (your own larger art) is used instead of the game's icon when it exists.
+function icons.texture(status_id, size)
     if not icons.ready or not status_id then return nil end
-    local hit = cache[status_id]
+    size = size and math.max(8, math.min(128, math.floor(size + 0.5))) or nil
+    local key = status_id .. ':' .. (size or 0)
+    local hit = cache[key]
     if hit ~= nil then return hit and hit.ptr or nil end
+    if cached_n > 400 then cache, cached_n = {}, 0 end   -- sizes pile up while the scale is dragged
 
-    local ok, res = pcall(function()
+    local custom = icons.file_texture('status', tostring(status_id))
+    if custom then
+        cache[key] = { ptr = custom }; cached_n = cached_n + 1
+        return custom
+    end
+
+    local function load(w, h, filter)
         local icon = AshitaCore:GetResourceManager():GetStatusIconById(status_id)
         if icon == nil then return nil end
         local out = ffi.new('IDirect3DTexture8*[1]')
-        local hr = C.D3DXCreateTextureFromFileInMemoryEx(dev, icon.Bitmap, icon.ImageSize, 0xFFFFFFFF, 0xFFFFFFFF, 1, 0,
-            C.D3DFMT_A8R8G8B8, C.D3DPOOL_MANAGED, C.D3DX_DEFAULT, C.D3DX_DEFAULT, 0xFF000000, nil, nil, out)
+        local hr = C.D3DXCreateTextureFromFileInMemoryEx(dev, icon.Bitmap, icon.ImageSize, w, h, 1, 0,
+            C.D3DFMT_A8R8G8B8, C.D3DPOOL_MANAGED, filter, filter, 0xFF000000, nil, nil, out)
         if hr ~= C.S_OK then return nil end
         local tex = d3d.gc_safe_release(ffi.cast('IDirect3DTexture8*', out[0]))
         return { tex = tex, ptr = tonumber(ffi.cast('uint32_t', tex)) }
-    end)
-    if ok and res then
-        cache[status_id] = res
+    end
+
+    local res
+    if size then
+        local ok, r = pcall(load, size, size, D3DX_FILTER_TRIANGLE)
+        if ok then res = r end
+    end
+    if not res then
+        local ok, r = pcall(load, 0xFFFFFFFF, 0xFFFFFFFF, C.D3DX_DEFAULT)
+        if ok then res = r end
+    end
+    if res then
+        cache[key] = res; cached_n = cached_n + 1
         return res.ptr
     end
-    cache[status_id] = false
+    cache[key] = false; cached_n = cached_n + 1
     icons.failed = icons.failed + 1
     return nil
 end

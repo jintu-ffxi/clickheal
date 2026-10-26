@@ -279,19 +279,6 @@ ja('troubadour',      'Troubadour',      'Trb', 'BRD', 75, { recast = 600.0 })
 -- Groups, tabs, ordering
 -- ---------------------------------------------------------------------------------------------
 
--- Tabs of the shared spell bar (Grid / Strip layouts), in display order.
-spells.BAR_TABS = { { 'heal', 'HEAL' }, { 'cleanse', 'CLEAN' }, { 'buff', 'BUFF' }, { 'raise', 'RAISE' } }
-
---- The preset's non-empty bar tabs: { { id, label, keys }, ... }.
-function spells.bar_tabs(preset)
-    local out = {}
-    for _, t in ipairs(spells.BAR_TABS) do
-        local keys = preset.bar and preset.bar[t[1]] or {}
-        if #keys > 0 then out[#out + 1] = { id = t[1], label = t[2], keys = keys } end
-    end
-    return out
-end
-
 -- Groups shown in the hover flyout, top to bottom. 'song' and 'ability' appear only on your own row.
 spells.GROUPS = { { 'heal', 'HEAL' }, { 'cleanse', 'CLEAN' }, { 'buff', 'BUFF' }, { 'raise', 'RAISE' },
                   { 'song', 'SONG' }, { 'ability', 'ABIL' } }
@@ -352,19 +339,6 @@ function spells.fit_list(list, who)
     return out
 end
 
-local function fit_bindings(map, who)
-    if not map then return nil end
-    local out = {}
-    for slot, v in pairs(map) do
-        if v == '-' or v == 'cleanse' then out[slot] = v
-        else
-            local b = spells.best(v, who)
-            if b then out[slot] = b end
-        end
-    end
-    return out
-end
-
 --- A copy of the preset with every list cut down to what the player can cast right now.
 function spells.fit(preset, who)
     if not who or not who.level then return preset end
@@ -377,8 +351,6 @@ function spells.fit(preset, who)
         out.bar = {}
         for g, list in pairs(preset.bar) do out.bar[g] = spells.fit_list(list, who) end
     end
-    out.bindings = fit_bindings(preset.bindings, who)
-    out.buff_bindings = fit_bindings(preset.buff_bindings, who)
     return out
 end
 
@@ -401,14 +373,10 @@ function spells.group_keys(cfg, preset, group, who)
     return (preset.bar and preset.bar[group]) or {}
 end
 
---- Cure and Curaga stay armed after a cast (you usually heal several people in a row);
--- everything else is one-shot.
-function spells.sticky(def) return def ~= nil and (def.kind == 'cure' or def.kind == 'curaga') end
-
 -- ---------------------------------------------------------------------------------------------
 -- Presets
 -- base  = the always-visible heal/cleanse row     raise = what a KO'd member shows
--- buffs = a second set for "buff mode"
+-- buffs = buffs worth adding to a member
 -- self  = abilities for your own row              songs = bard songs for your own row
 -- Lists name the strongest spell wanted; spells.fit() swaps in lower tiers (and drops what a
 -- sub job or low level can't cast) so the same preset works at any level.
@@ -428,11 +396,6 @@ local function sub_support(extra_self, songs)
             buff    = { 'haste', 'regen3', 'stoneskin', 'protect4', 'shell4', 'blink', 'aquaveil', 'sneak', 'invisible' },
             raise   = { 'raise1', 'raise2', 'reraise1', 'reraise2' },
         },
-        bindings = { left = 'cure4', right = 'cure2', middle = 'cleanse',
-            shift_left = 'cure3', shift_right = 'cure1', ctrl_left = 'curaga2', ctrl_right = 'curaga1' },
-        buff_bindings = { left = 'haste', right = 'regen3', middle = 'stoneskin',
-            shift_left = 'protect4', shift_right = 'shell4', ctrl_left = 'blink', ctrl_right = 'aquaveil',
-            alt_left = 'sneak', alt_right = 'invisible' },
     }
 end
 
@@ -448,12 +411,6 @@ spells.presets = {
             buff    = { 'haste', 'regen3', 'stoneskin', 'protectra4', 'shellra4', 'blink', 'aquaveil', 'sneak', 'invisible' },
             raise   = { 'raise1', 'raise2', 'raise3', 'reraise3' },
         },
-        bindings = { left = 'cure4', right = 'cure2', middle = 'cleanse',
-            shift_left = 'cure5', shift_right = 'cure1', ctrl_left = 'curaga3', ctrl_right = 'curaga1',
-            alt_left = 'haste', alt_right = 'regen3' },
-        buff_bindings = { left = 'haste', right = 'regen3', middle = 'stoneskin',
-            shift_left = 'protectra4', shift_right = 'shellra4', ctrl_left = 'blink', ctrl_right = 'aquaveil',
-            alt_left = 'sneak', alt_right = 'invisible' },
     },
     SCH = {
         base  = { 'cure4', 'cure3', 'cure2', 'cure1', 'erase', 'regen3', 'poisona', 'paralyna' },
@@ -466,11 +423,6 @@ spells.presets = {
             buff    = { 'stoneskin', 'protect4', 'shell4', 'blink', 'aquaveil', 'sneak', 'invisible' },
             raise   = { 'raise1', 'raise2', 'reraise1', 'reraise2' },
         },
-        bindings = { left = 'cure4', right = 'cure2', middle = 'cleanse',
-            shift_left = 'cure3', shift_right = 'cure1', alt_left = 'regen3', alt_right = 'regen2' },
-        buff_bindings = { left = 'regen3', right = 'regen2', middle = 'stoneskin',
-            shift_left = 'protect4', shift_right = 'shell4', ctrl_left = 'aquaveil',
-            alt_left = 'sneak', alt_right = 'invisible' },
     },
     RDM = {
         base  = { 'cure4', 'cure3', 'cure2', 'cure1' },
@@ -483,11 +435,6 @@ spells.presets = {
             buff    = { 'haste', 'refresh', 'flurry', 'phalanx2', 'phalanx', 'stoneskin', 'protect4', 'shell4', 'blink' },
             raise   = { 'raise1' },
         },
-        bindings = { left = 'cure4', right = 'cure2',
-            shift_left = 'cure3', shift_right = 'cure1', alt_left = 'haste', alt_right = 'refresh' },
-        buff_bindings = { left = 'haste', right = 'refresh', middle = 'stoneskin',
-            shift_left = 'phalanx2', shift_right = 'protect4', ctrl_left = 'shell4', ctrl_right = 'blink',
-            alt_left = 'flurry' },
     },
     BLM = sub_support({ 'manafont', 'elemental_seal', 'blaze_spikes', 'ice_spikes', 'shock_spikes' }, {}),
     BRD = sub_support({ 'soul_voice', 'pianissimo', 'nightingale', 'troubadour' }, {
@@ -498,7 +445,6 @@ spells.presets = {
         base  = { 'cure4', 'cure3', 'cure2', 'cure1' },
         raise = {},
         bar = { heal = { 'cure1', 'cure2', 'cure3', 'cure4' } },
-        bindings = { left = 'cure4', right = 'cure2', shift_left = 'cure3', shift_right = 'cure1' },
         buffs = {},
         self  = {},
     },
@@ -506,7 +452,6 @@ spells.presets = {
         base  = { 'cure3', 'cure2', 'cure1' },
         raise = {},
         bar = { heal = { 'cure1', 'cure2', 'cure3' } },
-        bindings = { left = 'cure3', right = 'cure2', shift_left = 'cure1' },
         buffs = {},
         self  = {},
     },

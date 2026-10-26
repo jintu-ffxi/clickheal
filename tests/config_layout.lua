@@ -112,6 +112,7 @@ package.preload['imgui'] = function()
         SliderFloat = function(l, t, lo, hi) note_id(l); place(take_width() + label_w(l), 'SliderFloat ' .. l); if sim.interact then t[1] = hi; return true end return false end,
         SliderInt = function(l, t, lo, hi) note_id(l); place(take_width() + label_w(l), 'SliderInt ' .. l); if sim.interact then t[1] = hi; return true end return false end,
         Button = function(l) place(tw(vis(l)) + 20 * sim.sc, 'Button ' .. vis(l)); return sim.interact end,
+        Dummy = function(sz) place(sz[1], 'Dummy') end,
         SmallButton = function(l) place(tw(vis(l)) + 20 * sim.sc, 'SmallButton ' .. vis(l)); return false end,
         CollapsingHeader = function(l)
             local r = region()
@@ -249,12 +250,10 @@ test('setup panel: every user-facing setting has a control somewhere', function(
     for _, over in ipairs(variants) do
         for i = 1, #configui.PAGES do run_page(i, 1.0, 7, nil, over) end
     end
-    -- Settings that are saved but deliberately have no control: positions, per-spell data, and options
-    -- retired from the UI (their code is still there).
+    -- Settings that are saved but deliberately have no control: positions and per-spell data.
     local hidden = {
         pos = true, alert_pos = true, spell_order = true, alerts = true, triage_opts = true, debug = true,
-        spellbar = true, cell_binds = true, buff_mode = true, hide_empty_groups = true, show_empty_slots = true,
-        bar_tab = true, binds = true, bindings = true, version = true,
+        version = true,
     }
     local missing = {}
     for k in pairs(chconfig.defaults) do

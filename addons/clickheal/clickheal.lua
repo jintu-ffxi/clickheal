@@ -32,8 +32,8 @@ local mousefix = require('ch.mousefix')
 local configui = require('ch.configui')
 local casting  = require('ch.casting')
 local chatstatus = require('ch.chatstatus')
+local livebuffs  = require('ch.livebuffs')
 local apicheck = require('ch.apicheck')
-local bindings = require('ch.bindings')
 local spells   = require('ch.spells')
 
 -- ---------------------------------------------------------------------------------------------
@@ -76,12 +76,17 @@ end
 
 ashita.events.register('load', 'clickheal_load', function()
     pcall(fonts.init)
-    log('Loaded. Casting is off until you turn it on (/ch demo off, /ch cast on).')
+    log('Loaded. Clicking a spell casts it on your real party (demo data never casts).')
     log('/ch opens the setup panel. /ch unlock to move the frames, /ch help for everything else.')
 end)
 
 ashita.events.register('text_in', 'clickheal_text_in', function(e)
     if e and e.message then pcall(chatstatus.feed, e.message) end
+end)
+
+-- Read-only: other members' status effects come from the server's own status packets.
+ashita.events.register('packet_in', 'clickheal_packet_in', function(e)
+    if e and e.id and (e.id == 0x076 or e.id == 0x029 or e.id == 0x00A) then pcall(livebuffs.feed, e.id, e.data) end
 end)
 
 ashita.events.register('unload', 'clickheal_unload', function()
@@ -115,7 +120,6 @@ ashita.events.register('command', 'clickheal_command', function(e)
         log(res.show_order .. ': ' .. table.concat(spells.group_keys(cfg, preset, res.show_order), ' '))
     end
     if res.cursor ~= nil then state.cursor = res.cursor end
-    if res.input_debug ~= nil then state.input_debug = res.input_debug end
     if res.party_dump then game_source.dump_status(log) end
     if res.api_check then state.api_check = true end   -- runs in the next draw frame; ImGui is not valid here
     if res.changed then
@@ -128,9 +132,9 @@ end)
 -- drawing
 -- ---------------------------------------------------------------------------------------------
 
--- /ch inputdebug: one chat line per mouse click saying which window saw it.
+-- Debug page 'Log clicks': one chat line per mouse click saying which window saw it.
 local function debug_click(name, inp, rect)
-    if not (state.input_debug or (cfg.debug and cfg.debug.input)) or not inp.clicked then return end
+    if not (cfg.debug and cfg.debug.input) or not inp.clicked then return end
     local c = inp.clicked
     if not (c.left or c.right or c.middle) then return end
     log(string.format('[input] %s window click: %s mouse=(%d,%d) window=(%d,%d %dx%d) hovered=%s',

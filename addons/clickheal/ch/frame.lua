@@ -21,11 +21,11 @@ local SAMPLE_BUFFS = {
     { 'haste', 'protect', 'shell' }, { 'regen', 'refresh' }, { 'protect', 'shell', 'stoneskin', 'blink' },
 }
 
---- Debug page: gives members sample debuffs / buffs so the status UI can be tested on any roster.
--- Returns the list unchanged when no switch is on; otherwise shallow copies of the members.
+--- Debug page: gives demo members sample debuffs / buffs so the status UI can be tested. Demo mode only: a live
+-- party always shows its real statuses. Returns the list unchanged when no switch is on or demo mode is off; otherwise shallow copies of the members.
 function frame.apply_debug(list, cfg)
     local d = cfg.debug
-    if not d or not (d.force_debuffs or d.force_buffs) then return list end
+    if not cfg.demo or not d or not (d.force_debuffs or d.force_buffs) then return list end
     local out = {}
     for i, m in ipairs(list) do
         if m.active and not m.dead then
@@ -62,11 +62,10 @@ function frame.build(cfg, source, t, disp_w, disp_h, dismissed)
     local preset, preset_name = spells.preset_for(player.job, player.sub)
     preset = spells.fit(preset, player)   -- only what the player has learned (sub job at half level)
 
-    local groups = layout.groups_for(cfg.mode, cfg.hide_empty_groups, present)
+    local groups = layout.groups_for(cfg.mode, true, present)
     local lopts = {
         orientation = cfg.orientation,
         auto_scale = cfg.auto_scale, scale = cfg.scale, groups = groups,
-        spellbar = cfg.spellbar,
         row_w = cfg.row_w, row_h = (cfg.skin == 'hairline') and cfg.hl_row_h or cfg.row_h, debuff_icon = cfg.debuff_icon, buff_icon = cfg.buff_icon,
         mp_h = cfg.show_mp and cfg.mp_height or 0,
         mp_pct = cfg.show_mp_pct and cfg.mp_pct_scale or nil,

@@ -18,7 +18,6 @@ layout.STRIP = { card_w = 230, card_h = 42, pad = 4, text_h = 22 }   -- text_h: 
 -- Triage view (base px): the featured member's panel, then a compact list of everyone else.
 layout.TRI = { pad = 6, gap = 6, head_h = 24, bar_h = 14, tile_h = 34, list_h = 18, list_gap = 2 }
 
-layout.BAR = { btn = 26, gap = 3, tab_h = 15, pad = 4, tiles = 9 }   -- optional shared spell bar under the rows
 layout.HEADER_H   = 16   -- slim title strip
 layout.LABEL_H    = 18   -- per-group label (only when more than one group is shown)
 layout.CARD_GAP   = 4
@@ -78,7 +77,7 @@ end
 --- Computes every rectangle the UI needs, in final screen pixels relative to the panel origin.
 --
 -- opts:
---   orientation, auto_scale, scale, spellbar
+--   orientation, auto_scale, scale
 --   groups : array of group indexes to show (0 = your party, 1 = alliance 1, 2 = alliance 2)
 -- Returns a table; `cards[slot]` = { x, y, w, h, group, index } where slot = group * 6 + index.
 function layout.compute(opts, display_h)
@@ -160,21 +159,6 @@ function layout.compute(opts, display_h)
         }
         total_w = g.card_w
         total_h = g.header_h + main_h + ((n > 0) and (gap + list_h) or 0)
-    end
-
-    -- Shared spell bar under the rows.
-    if opts.spellbar then
-        local b = layout.BAR
-        local btn = round(math.max(b.btn, layout.MIN_BTN) * s)
-        local gap = math.max(1, round(b.gap * s))
-        local pad = math.max(1, round(b.pad * s))
-        local tab_h = round(b.tab_h * s)
-        local bw = b.tiles * (btn + gap) - gap + 2 * pad
-        local bh = pad + tab_h + gap + btn + pad
-        local by = total_h + g.group_gap
-        g.bar = { x = 0, y = by, w = bw, h = bh, btn = btn, gap = gap, pad = pad, tab_h = tab_h, tiles = b.tiles }
-        total_w = math.max(total_w, bw)
-        total_h = by + bh
     end
 
     g.width, g.height = total_w, total_h

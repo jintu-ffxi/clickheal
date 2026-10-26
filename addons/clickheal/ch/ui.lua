@@ -31,15 +31,14 @@ local debuffs    = require('ch.debuffs')
 local spells     = require('ch.spells')
 local spellstate = require('ch.spellstate')
 local buffs      = require('ch.buffs')
-local bindings   = require('ch.bindings')
 local layout     = require('ch.layout')
 local triage     = require('ch.triage')
 
 local ui = {}
 
--- Transient UI state (not saved): the spell armed on the bar, waiting for a member click.
-ui.state = { armed = nil, flyout = nil, row_hot = false, trail = {}, tri_slot = nil }
-function ui.reset_state() ui.state.armed = nil; ui.state.flyout = nil; ui.state.row_hot = false; ui.state.trail = {}; ui.state.tri_slot = nil end
+-- Transient UI state (not saved).
+ui.state = { flyout = nil, row_hot = false, trail = {}, tri_slot = nil }
+function ui.reset_state() ui.state.flyout = nil; ui.state.row_hot = false; ui.state.trail = {}; ui.state.tri_slot = nil end
 local floor, max, min = math.floor, math.max, math.min
 
 -- ------------------------------------------------------------------------------------------
@@ -435,9 +434,7 @@ end
 -- Strip rows: the whole row is the click target (hover opens the flyout)
 -- ------------------------------------------------------------------------------------------
 
---- Hover outline, tooltip, and the click -> cast event.
--- Armed spell (picked on the bar): left click casts it on this member, right click cancels.
--- Otherwise, if cell click bindings are on (or there is no bar), a click casts the bound spell.
+--- Hover outline, tooltip, and (when the hover menu is on) which row's spell flyout is open.
 local function cell_interact(f, m, r)
     note_hitbox(f, 'cell', r.x, r.y, r.w, r.h, { slot = m.slot })
     if not hovering(f, r.x, r.y, r.w, r.h) then return end
@@ -450,57 +447,11 @@ local function cell_interact(f, m, r)
         ui.state.row_hot = true
     else
         outline(g, r.x, r.y, r.w, r.h, max(1, floor(1.5 * s)), A(pal.accent, 0.9))
-    end
-
-    local head = string.format('%s   %s   %s', m.name, jobs.label(m.job, m.sub), dist_text(m))
-    local btn = click_button(f)
-    local armed = ui.state.armed and spells.defs[ui.state.armed] or nil
-
-    if armed then
-        local state, detail = spellstate.evaluate(armed, m, f.player, f.cfg)
         if not f.tooltip then
-            f.tooltip = { head, string.format('Click: %s on %s', armed.name, m.name),
-                'Status: ' .. spellstate.describe(state, detail), 'Right click: cancel' }
+            f.tooltip = { string.format('%s   %s   %s', m.name, jobs.label(m.job, m.sub), dist_text(m)),
+                'The spell menu is off (Spells page)' }
         end
-        if btn == 'right' then
-            ui.state.armed = nil
-        elseif btn == 'left' then
-            f.events[#f.events + 1] = {
-                type = 'cast', via = 'bar', slot = m.slot, spell = armed.key, button = 'left',
-                mods = f.input.mods or {}, state = state, detail = detail,
-            }
-            if not spells.sticky(armed) then ui.state.armed = nil end
-        end
-        return
     end
-
-    local use_binds = f.cfg.cell_binds or (not f.geom.bar and not f.cfg.flyout)
-    if not use_binds then
-        if not f.tooltip and not f.cfg.flyout then f.tooltip = { head, 'Pick a spell on the bar, then click a member' } end
-        return
-    end
-
-    local eff = bindings.effective(f.cfg, f.preset)
-    local lines = { head }
-    for _, l in ipairs(bindings.describe(eff, m, f.preset)) do lines[#lines + 1] = l end
-    if f.cfg.buff_mode and not m.dead then lines[#lines + 1] = '(buff mode: click casts buffs)' end
-    if not f.tooltip then f.tooltip = lines end
-
-    if not btn then return end
-    local mods = f.input.mods or {}
-    local slot = bindings.slot_name(btn, mods)
-    local value = slot and eff[slot] or nil
-    local key, why = bindings.resolve(value, m, f.preset, btn)
-    if not key then
-        if why then f.events[#f.events + 1] = { type = 'note', text = '[ClickHeal] ' .. why } end
-        return
-    end
-    local def = spells.defs[key]
-    local state, detail = spellstate.evaluate(def, m, f.player, f.cfg)
-    f.events[#f.events + 1] = {
-        type = 'cast', via = 'cell', slot = m.slot, spell = key, button = btn, mods = mods,
-        state = state, detail = detail,
-    }
 end
 
 --- What actually fits in the row (see layout.effective); falls back to the settings for hand-built frames.
@@ -787,150 +738,6 @@ function ui.draw_flyout(f)
 end
 
 -- ------------------------------------------------------------------------------------------
--- Shared spell bar: pick a spell, then click a member
--- ------------------------------------------------------------------------------------------
-
---- What the party needs right now: set of -na/Erase spell keys, and how many members are KO'd.
-local function party_needs(f)
-    local spells_needed, dead = {}, 0
-    for _, m in pairs(f.roster) do
-        if m.active and not m.zone_diff then
-            if m.dead then dead = dead + 1
-            elseif m.has_buff_data and m.debuffs then
-                for _, k in ipairs(m.debuffs) do
-                    local info = debuffs.info[k]
-                    if info and info.spell and not f.cfg.alerts.muted[k] then spells_needed[info.spell] = true end
-                end
-            end
-        end
-    end
-    return spells_needed, dead
-end
-
-local function draw_bar_tile(f, x, y, size, key, needed, armed)
-    local g, pal, s = f.gfx, f.pal, f.geom.scale
-    local def = spells.defs[key]
-    local dummy = { active = true, dead = (def.kind == 'raise') }
-    local state, detail = spellstate.evaluate(def, dummy, f.player, f.cfg)
-    local ready = (state == 'ready')
-    local hot = hovering(f, x, y, size, size)
-    local round = floor(3 * s)
-
-    local bg = hot and pal.btn_hot or pal.btn
-    if armed then bg = theme.mix(bg, pal.accent, 0.35) end
-    if not ready and state ~= 'recast' then bg = A(bg, 0.65) end
-    g.rect_filled(x, y, size, size, bg, round)
-
-    local lh = max(2, floor(2 * s))
-    local kc = pal.kind[def.kind] or pal.accent
-    g.rect_filled(x + floor(4 * s), y + size - lh - floor(3 * s), size - floor(8 * s), lh, A(kc, ready and 0.85 or 0.30), 0)
-
-    if state == 'recast' then
-        paint_recast(f, x, y, size, def, detail, round)
-    else
-        if not ready and state ~= 'nomp' then
-            g.rect_filled(x, y, size, size, theme.pack(0, 0, 0, 0.35), round)
-        end
-        local label = def.short
-        local col = ready and pal.text or (state == 'nomp' and pal.mp or A(pal.text_dim, 0.8))
-        local tw, th = g.text_size(label)
-        g.text(x + floor((size - tw) / 2), y + floor((size - th) / 2) - floor(2 * s), col, label)
-    end
-
-    if armed then
-        outline(g, x, y, size, size, max(1, floor(2 * s)), pal.accent)
-    elseif needed then
-        outline(g, x, y, size, size, max(1, floor(2 * s)), theme.alpha(pal.warn, 0.35 + 0.65 * pulse(f)))
-    elseif hot then
-        outline(g, x, y, size, size, max(1, floor(1 * s)), A(pal.accent, 0.9))
-    end
-
-    note_hitbox(f, 'bar_tile', x, y, size, size, { key = key })
-    if hot then
-        f.tooltip = {
-            string.format('%s   (%d MP)', def.name, def.mp or 0),
-            'Status: ' .. spellstate.describe(state, detail),
-            armed and 'Click: disarm' or (spells.sticky(def) and 'Click: arm (stays armed), then click members'
-                or 'Click: arm, then click a member'),
-        }
-        local btn = click_button(f)
-        if btn == 'left' then
-            ui.state.armed = armed and nil or key
-        elseif btn == 'right' then
-            ui.state.armed = nil
-        end
-    end
-end
-
-local function draw_spellbar(f)
-    local b = f.geom.bar
-    if not b then return end
-    local g, pal, s = f.gfx, f.pal, f.geom.scale
-    local tabs = spells.bar_tabs(f.preset)
-    if #tabs == 0 then return end
-
-    local cur = tabs[1]
-    for _, tb in ipairs(tabs) do if tb.id == f.cfg.bar_tab then cur = tb end end
-
-    local bx, by = f.ox + b.x, f.oy + b.y
-    local th = select(2, g.text_size('Ag'))
-    g.rect_filled(bx, by, b.w, b.h, theme.alpha(pal.card, f.cfg.opacity), floor(4 * s))
-
-    local needed, dead = party_needs(f)
-    local any_needed = next(needed) ~= nil
-
-    -- Tabs.
-    local tx, ty = bx + b.pad, by + b.pad
-    for _, tb in ipairs(tabs) do
-        local tw = g.text_size(tb.label) + floor(10 * s)
-        local hot = hovering(f, tx, ty, tw, b.tab_h)
-        local bg = hot and pal.btn_hot or pal.btn
-        if tb.id == cur.id then bg = theme.mix(bg, pal.accent, 0.28) end
-        g.rect_filled(tx, ty, tw, b.tab_h, bg, floor(3 * s))
-        g.text(tx + floor(5 * s), ty + floor((b.tab_h - th) / 2),
-            tb.id == cur.id and pal.text or pal.text_dim, tb.label)
-        local attention = (tb.id == 'cleanse' and any_needed) or (tb.id == 'raise' and dead > 0)
-        if attention and tb.id ~= cur.id then
-            local d = max(3, floor(4 * s))
-            g.rect_filled(tx + tw - d - 1, ty + 1, d, d, theme.alpha(pal.warn, 0.45 + 0.55 * pulse(f)), floor(d / 2))
-        end
-        note_hitbox(f, 'bar_tab', tx, ty, tw, b.tab_h, { id = tb.id })
-        if hot and click_button(f) == 'left' and tb.id ~= cur.id then
-            f.events[#f.events + 1] = { type = 'toggle', what = 'bar_tab', value = tb.id }
-        end
-        tx = tx + tw + floor(3 * s)
-    end
-
-    -- Status text to the right of the tabs.
-    local armed = ui.state.armed and spells.defs[ui.state.armed] or nil
-    local cands
-    if armed then
-        cands = { 'Armed: ' .. armed.name .. ' - click a member, right click cancels',
-                  'Armed: ' .. armed.name .. ' - click a member', 'Armed: ' .. armed.name, armed.name }
-    else
-        cands = { 'Pick a spell, then click a member', 'Pick a spell, then a member', 'Spell, then member' }
-    end
-    local room = bx + b.w - b.pad - tx - floor(4 * s)
-    local msg
-    for _, c in ipairs(cands) do
-        if g.text_size(c) <= room then msg = c; break end
-    end
-    if msg then
-        g.text(bx + b.w - b.pad - g.text_size(msg), ty + floor((b.tab_h - th) / 2),
-            armed and pal.accent or A(pal.text_dim, 0.8), msg)
-    end
-
-    -- Tiles.
-    local x0, y0 = bx + b.pad, ty + b.tab_h + b.gap
-    for i, key in ipairs(cur.keys) do
-        if i > b.tiles then break end
-        draw_bar_tile(f, x0 + (i - 1) * (b.btn + b.gap), y0, b.btn, key,
-            (needed[key] or (cur.id == 'raise' and dead > 0 and spells.defs[key].kind == 'raise')) and true or false,
-            ui.state.armed == key)
-    end
-end
-
--- ------------------------------------------------------------------------------------------
 -- Hairline row: no card, a colored job line, a large colored percentage, a thin HP rail
 -- ------------------------------------------------------------------------------------------
 
@@ -1136,7 +943,7 @@ end
 local function natural_size(f, orient)
     local c = f.cfg
     local o = {
-        orientation = orient, auto_scale = c.auto_scale, scale = 1.0, groups = f.groups, spellbar = c.spellbar,
+        orientation = orient, auto_scale = c.auto_scale, scale = 1.0, groups = f.groups,
         row_w = c.row_w, row_h = (c.skin == 'hairline') and c.hl_row_h or c.row_h,
         debuff_icon = c.debuff_icon, buff_icon = c.buff_icon, mp_h = c.show_mp and c.mp_height or 0,
         mp_pct = c.show_mp_pct and c.mp_pct_scale or nil, skin = c.skin, hl_pct = c.hl_pct, name_scale = c.name_scale,
@@ -1225,8 +1032,7 @@ local function draw_triage(f)
     local right_txt, right_col
     if feat.dead then right_txt, right_col = 'KO', pal.bad
     elseif tier == 3 and fix[1] then right_txt, right_col = debuffs.info[fix[1].key].label, pal.bad
-    elseif def_hp > 0 then right_txt, right_col = '-' .. def_hp, theme.hp_color(pal, frac)
-    else right_txt, right_col = 'ALL FULL', pal.good end
+    else right_txt, right_col = string.format('%d%%', floor(feat.hpp or 0)), theme.hp_color(pal, frac) end
     local rw_, rh_ = g.text_size_scaled(right_txt, 1.2)
     g.text_scaled(x1 - rw_, hy + floor((M.head_h - rh_) / 2), A(right_col, dim), right_txt, 1.2)
 
@@ -1268,7 +1074,7 @@ local function draw_triage(f)
         end
     end
 
-    -- Hovering the head opens the usual flyout / click bindings for this member.
+    -- Hovering the head opens the usual spell menu for this member.
     cell_interact(f, feat, { x = mx, y = my, w = M.w, h = M.pad + M.head_h + M.gap + M.bar_h })
 
     -- Everyone else, neediest first.
@@ -1360,29 +1166,6 @@ function ui.draw_roster(f)
         g.text(ox + floor(6 * s), oy + floor((geom.header_h - th) / 2), A(pal.text_dim, 0.9), 'CLICKHEAL')
     end
 
-    -- Heal / Buff mode switch (only for jobs that have buff spells).
-    local chip_w = 0
-    if has_header and f.preset.buffs and #f.preset.buffs > 0 and not geom.bar and not f.cfg.flyout then
-        local label = f.cfg.buff_mode and 'BUFF' or 'HEAL'
-        local cx = ox + g.text_size('CLICKHEAL') + floor(14 * s)
-        local ch_h = geom.header_h - 2
-        local cw = g.text_size('BUFF') + floor(10 * s)
-        local hot = hovering(f, cx, oy + 1, cw, ch_h)
-        local bg = hot and pal.btn_hot or pal.btn
-        if f.cfg.buff_mode then bg = theme.mix(bg, pal.accent, 0.25) end
-        g.rect_filled(cx, oy + 1, cw, ch_h, bg, floor(3 * s))
-        local lw = g.text_size(label)
-        g.text(cx + floor((cw - lw) / 2), oy + floor((geom.header_h - th) / 2),
-            f.cfg.buff_mode and pal.text or pal.text_dim, label)
-        note_hitbox(f, 'mode', cx, oy + 1, cw, ch_h, {})
-        if hot then
-            f.tooltip = { 'Spell row: ' .. (f.cfg.buff_mode and 'buffs' or 'heals and cleanses'), 'Click to switch   (/ch buffmode)' }
-            if click_button(f) == 'left' then
-                f.events[#f.events + 1] = { type = 'toggle', what = 'buff_mode' }
-            end
-        end
-        chip_w = cw + floor(8 * s)
-    end
 
     -- Header buttons (work whether the panel is locked or not): MOVE/LOCK and CFG, right-aligned.
     local buttons_w = 0
@@ -1417,7 +1200,7 @@ function ui.draw_roster(f)
     if not f.cfg.locked then
         candidates = { 'UNLOCKED - drag to move  (/ch lock)', 'UNLOCKED - drag to move', 'UNLOCKED' }
         tag_col = pal.warn
-    elseif f.cfg.debug and (f.cfg.debug.force_debuffs or f.cfg.debug.force_buffs) then
+    elseif f.cfg.demo and f.cfg.debug and (f.cfg.debug.force_debuffs or f.cfg.debug.force_buffs) then
         candidates = { 'SAMPLE STATUS ON (Debug page)', 'SAMPLE STATUS ON', 'SAMPLES' }
         tag_col = pal.warn
     elseif f.cfg.demo then
@@ -1425,7 +1208,7 @@ function ui.draw_roster(f)
         tag_col = A(pal.text_dim, 0.7)
     end
     if candidates and has_header then
-        local title_w = g.text_size('CLICKHEAL') + floor(6 * s) + chip_w
+        local title_w = g.text_size('CLICKHEAL') + floor(6 * s)
         local room = geom.width - title_w - floor(18 * s) - buttons_w
         for _, tag in ipairs(candidates) do
             local tw = g.text_size(tag)
@@ -1467,7 +1250,7 @@ function ui.draw_roster(f)
             local m = f.roster[slot]
             if m and m.active then
                 draw_member(f, m, r)
-            elseif f.cfg.show_empty_slots then
+            else
                 draw_empty(f, r)
             end
         end
@@ -1509,13 +1292,7 @@ function ui.draw_roster(f)
         ui.state.resize = nil
     end
 
-    draw_spellbar(f)
     update_flyout_state(f)
-
-    -- A right click anywhere on the panel drops the armed spell.
-    if ui.state.armed and click_button(f) == 'right' and hovering(f, ox, oy, geom.width, geom.height) then
-        ui.state.armed = nil
-    end
 
     if f.tooltip then g.tooltip(f.tooltip, s) end
     return f.events

@@ -2,11 +2,10 @@
     ClickHeal - actions.lua
     What happens when the user clicks a spell button or an alert.
 
-    CASTING IS OFF BY DEFAULT. This module never talks to the game itself: it builds a normal chat
-    command (one click = one /ma or /ja) and hands it to ctx.send. That only happens when ALL of these
-    hold: the user ran `/ch cast on`, demo data is off, and the button was ready. Otherwise a click only
-    logs what it would do (and starts a fake recast in the demo source).
-    CatsEyeXI does not allow unlisted addons: do not turn casting on there without staff approval.
+    This module never talks to the game itself: it builds a normal chat command (one click = one /ma
+    or /ja) and hands it to ctx.send. That happens when demo data is off and the button is ready.
+    Demo data and demo members never cast: a click only logs what it would do (and starts a fake recast).
+    CatsEyeXI does not allow unlisted addons: do not run ClickHeal there without staff approval.
 
     Events arrive from ui.lua with the click binding ALREADY resolved (a right click on "Cure III"
     arrives as spell = 'cure2'), so nothing here resolves it again.
@@ -81,16 +80,6 @@ function actions.perform(ev, ctx)
             if ctx.changed then ctx.changed() end
             return 'toggled'
         end
-        if ev.what == 'buff_mode' and ctx.cfg then
-            ctx.cfg.buff_mode = not ctx.cfg.buff_mode
-            if ctx.changed then ctx.changed() end
-            return 'toggled'
-        end
-        if ev.what == 'bar_tab' and ctx.cfg and ev.value then
-            ctx.cfg.bar_tab = ev.value
-            if ctx.changed then ctx.changed() end
-            return 'toggled'
-        end
         return 'ignored'
     end
 
@@ -126,7 +115,7 @@ function actions.perform(ev, ctx)
         casting.start(def, ctx.now, ctx.cfg)
         return 'cast'
     end
-    if ctx.send and ctx.cfg and ctx.cfg.cast and not ctx.demo then
+    if ctx.send and not ctx.demo then
         local cmd = actions.command_for(def, token)
         ctx.send(cmd)
         casting.start(def, ctx.now, ctx.cfg)
