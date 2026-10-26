@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.lua }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lua: [lua5.1, lua5.4, luajit]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ${{ matrix.lua }}
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.lua }}
+      - name: Run the tests
+        run: LUA=${{ matrix.lua }} sh tools/test.sh
+
+  checks:
+    name: Syntax and version checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Every Lua file parses
+        run: |
+          status=0
+          for f in $(git ls-files '*.lua'); do
+            luac5.4 -p "$f" || status=1
+          done
+          exit $status
+      - name: Addon version matches the top CHANGELOG entry
+        run: |
+          addon=$(sed -n "s/^addon.version *= *'\(.*\)'.*/\1/p" addons/clickheal/clickheal.lua)
+          top=$(sed -n 's/^## \([0-9][0-9.]*\).*/\1/p' CHANGELOG.md | head -n 1)
+          echo "addon $addon, changelog $top"
+          [ -n "$addon" ] && [ "$addon" = "$top" ]
+      - name: No game art or generated files are tracked
+        run: |
+          if git ls-files | grep -E '^(media_icons|media_json|preview_|dist/)|\.bmp$'; then
+            echo "generated files or game icons are tracked" >&2; exit 1
+          fi

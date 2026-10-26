@@ -3,10 +3,12 @@
 # Needs a Lua interpreter (lua, luajit, lua5.4 or texlua).
 cd "$(dirname "$0")/.." || exit 2
 
-LUA=""
-for c in lua luajit lua5.4 lua54 lua5.3 texlua; do
-    if command -v "$c" >/dev/null 2>&1; then LUA="$c"; break; fi
-done
+# LUA=<interpreter> picks one; otherwise the first of these found is used.
+if [ -z "$LUA" ]; then
+    for c in lua luajit lua5.4 lua54 lua5.3 texlua; do
+        if command -v "$c" >/dev/null 2>&1; then LUA="$c"; break; fi
+    done
+fi
 [ -n "$LUA" ] || { echo "No Lua interpreter found on PATH." >&2; exit 2; }
 
 echo "Using $LUA"

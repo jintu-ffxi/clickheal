@@ -1,0 +1,43 @@
+name: Release
+
+# Push a tag like v1.0.2 and this builds the zip and publishes the release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua and zip
+        run: sudo apt-get update && sudo apt-get install -y lua5.4 zip
+      - name: Tag must match the addon version
+        run: |
+          addon=$(sed -n "s/^addon.version *= *'\(.*\)'.*/\1/p" addons/clickheal/clickheal.lua)
+          echo "addon $addon, tag ${GITHUB_REF_NAME}"
+          [ "v$addon" = "${GITHUB_REF_NAME}" ]
+      - name: Run the tests
+        run: LUA=lua5.4 sh tools/test.sh
+      - name: Build the zip
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p stage dist
+          cp -r addons stage/addons
+          cp -r media stage/media
+          cp README.md LICENSE CHANGELOG.md stage/
+          (cd stage && zip -qr "../dist/clickheal-${ver}.zip" .)
+          ls -l dist
+      - name: Release notes from the CHANGELOG
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v v="$ver" '$0 ~ "^## " v {f=1; next} /^## / {f=0} f' CHANGELOG.md > notes.md
+          printf '\n**Not approved on CatsEyeXI.** Get the server staff to approve it before loading it there.\n' >> notes.md
+          cat notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" "dist/clickheal-${GITHUB_REF_NAME#v}.zip" --title "ClickHeal ${GITHUB_REF_NAME#v}" --notes-file notes.md

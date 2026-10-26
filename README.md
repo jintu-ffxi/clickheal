@@ -1,4 +1,5 @@
 # ClickHeal
+n[![CI](https://github.com/jintu-ffxi/clickheal/actions/workflows/ci.yml/badge.svg)](https://github.com/jintu-ffxi/clickheal/actions/workflows/ci.yml)
 
 Click-to-heal party and alliance frames for **Final Fantasy XI** on **Ashita v4**. Hover a party member, click a spell, done. Built for healers, but any job can use it.
 
