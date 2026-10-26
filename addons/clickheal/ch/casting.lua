@@ -43,6 +43,7 @@ function casting.start(def, now, cfg)
     st.key, st.name = def.key, def.name
     st.lockout = lockout
     st.bar_seen = false
+    st.bar_t0, st.pct, st.pct_at = nil, nil, nil
 end
 
 --- Feeds the game's cast bar (progress 0..1, or nil when it cannot be read).
@@ -50,12 +51,16 @@ function casting.observe(now, pct)
     if pct == nil or now >= st.until_ then return end
     if pct > 0 and pct < 1 then
         st.bar_seen, st.bar_works = true, true
-        if pct > 0.05 then
-            local total = (now - st.started) / pct          -- real length of this cast
-            st.total = total
-            st.cast_end = st.started + total
-            st.until_ = st.cast_end + st.lockout
-        end
+        st.pct, st.pct_at = pct, now
+        -- The game's bar starts after the click (the server has to answer first), so time the cast from when the bar
+        -- began, not from the click. Measured from the click, the first readings would stretch the cast out and
+        -- the bar would jump backwards.
+        if not st.bar_t0 then st.bar_t0 = now - pct * (st.total or 0) end
+        local total = st.total or 0
+        if pct > 0.15 or total <= 0 then total = (now - st.bar_t0) / pct end   -- measured length of this cast
+        st.total = total
+        st.cast_end = st.bar_t0 + total
+        st.until_ = st.cast_end + st.lockout
     elseif st.bar_works then
         if st.bar_seen then
             -- The bar was running and is gone: the cast is over, only the short delay remains.
@@ -80,6 +85,11 @@ function casting.info(now)
     if left <= 0 then return nil end
     local cast_left = math.max(0, st.cast_end - now)
     local frac = (st.total or 0) > 0 and math.max(0, math.min(1, 1 - cast_left / st.total)) or 1
+    if st.pct and now - st.pct_at < 0.25 then
+        frac = st.pct                                      -- the game's own bar, while it is showing
+    elseif st.bar_works and not st.bar_seen and cast_left > 0 then
+        frac = 0                                           -- the bar will start once the server answers: do not run ahead of it
+    end
     return { left = left, cast_left = cast_left, total = st.total, frac = frac, key = st.key, name = st.name }
 end
 
