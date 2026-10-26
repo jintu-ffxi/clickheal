@@ -17,3 +17,4 @@ preview_config_png/
 media_json/
 tools/__pycache__/
 media_icons/
+dist/

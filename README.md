@@ -66,9 +66,13 @@ The featured member at the top (their worst status effect, HP and your cure tile
 |---|---|
 | ![Appearance](media/setup-appearance.png) | ![Commands](media/setup-commands.png) |
 
+## Download
+
+Get the latest `clickheal-<version>.zip` from the Releases page, or clone this repository.
+
 ## Install
 
-1. Copy the folder `addons/clickheal` into your Ashita install's `addons` folder so you have `Ashita/addons/clickheal/clickheal.lua`.
+1. Unzip the release into your Ashita install folder (it contains `addons/clickheal`), or copy the folder `addons/clickheal` into your Ashita install's `addons` folder so you have `Ashita/addons/clickheal/clickheal.lua`.
 2. In game: `/addon load clickheal`
 3. `/ch` opens the setup panel.
 
@@ -171,3 +175,7 @@ tools/                 preview and media renderers
 ```
 
 The split is deliberate: `ui.lua` draws through `gfx`, so the same drawing code runs in the game (ImGui) and in the tests and previews (recorder). Only `gfx_imgui.lua`, `configui.lua` and `clickheal.lua` touch Ashita.
+
+## License
+
+[MIT](LICENSE). Final Fantasy XI and its artwork belong to Square Enix; ClickHeal ships none of it and uses the icons from your own game install.

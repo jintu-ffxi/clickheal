@@ -2,17 +2,18 @@
     ClickHeal - Ashita v4 addon
     Click-to-heal party / alliance frames for FFXI.
 
-    PHASE 1: interface shell running on DEMO DATA ONLY.
-      * It does not read party/game memory.
-      * It does not send any command or packet to the game. A click only logs what it WOULD cast.
-    Do not load this on a live server until the server's staff have approved it.
+    Draws your party and alliance, and casts a spell on a member when you click it in the hover menu.
+    A click sends a normal chat command (/ma or /ja). It reads the game (party memory, status packets,
+    recasts) but never sends packets or acts on its own.
+
+    Some servers only allow approved addons. Get the server's staff to approve it before you load it there.
 ]]--
 
 addon.name    = 'clickheal'
-addon.author  = 'ClickHeal'
-addon.version = '0.1.0'
-addon.desc    = 'Click-to-heal party/alliance frames (Phase 1: UI shell with demo data only).'
-addon.link    = ''
+addon.author  = 'Jintu'
+addon.version = '1.0.0'
+addon.desc    = 'Click-to-heal party and alliance frames with a hover spell menu, alerts and triage view.'
+addon.link    = 'https://github.com/jintu-ffxi/clickheal'
 
 require('common')
 local chat     = require('chat')
