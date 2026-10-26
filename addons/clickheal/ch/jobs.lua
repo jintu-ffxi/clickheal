@@ -46,7 +46,8 @@ local GREY = { 0.62, 0.65, 0.70 }
 
 --- r, g, b for a job's block color.
 function jobs.hue(id)
-    return table.unpack(HUE[id] or GREY)
+    local c = HUE[id] or GREY   -- not table.unpack: Lua 5.1 and LuaJIT only have the global unpack
+    return c[1], c[2], c[3]
 end
 
 local UNKNOWN = { abbr = '???', role = 'dd' }
