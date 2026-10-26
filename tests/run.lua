@@ -1389,6 +1389,28 @@ test('casting: the real cast bar overrides the estimate; a bar that never shows 
     near(casting.left(31.0), 2.5, 0.01)
 end)
 
+test('casting: the progress bar never runs backwards when the game bar starts late, and follows the game bar', function()
+    local function run(first_cast)
+        local def, lag, real = spells.defs.cure4, 0.5, 2.5
+        casting.start(def, 10, { cast_lockout = 1.0 })
+        local prev = 0
+        for i = 1, 40 do
+            local t = 10 + i * 0.1
+            local pct = (t - 10 - lag) / real
+            casting.observe(t, (pct > 0 and pct < 1) and pct or (pct >= 1 and 1 or 0))
+            local info = casting.info(t)
+            if info and pct > 0 and pct < 1 then near(info.frac, pct, 0.02, 'tracks the game bar at +' .. (i * 0.1)) end
+            if info and (not first_cast or pct > 0) then
+                truthy(info.frac >= prev - 1e-9, string.format('went backwards at +%.1f: %.2f -> %.2f', i * 0.1, prev, info.frac))
+                prev = info.frac
+            end
+        end
+    end
+    casting.reset()
+    run(true)           -- first cast: nothing is known about the bar yet, so only the part after it appears is checked
+    run(false)          -- afterwards the bar is known to work and the progress waits for it
+end)
+
 test('casting: one queued click, newest wins, sent only when free, dropped when stale', function()
     casting.reset()
     casting.start(spells.defs.cure4, 10, { cast_lockout = 1.0 })
@@ -2078,6 +2100,64 @@ test('commands: every listed command works, and nothing experimental is left', f
         truthy(commands.run({ '/ch', gone }, new_cfg({})).messages[1]:find('Unknown'), '/ch ' .. gone .. ' should be gone')
     end
     eq(#commands.run({ '/ch', 'help' }, new_cfg({})).messages, #commands.LIST, 'help prints the whole list')
+end)
+
+-- =============================================================================================
+-- performance caches: they must save work without ever serving stale data
+-- =============================================================================================
+
+test('livebuffs: the sorted list is shared until something changes, then rebuilt', function()
+    live.reset()
+    live.feed(0x076, party_buff_packet(500, { 33, 3 }))
+    local a = live.get(500)
+    truthy(a == live.get(500), 'same list while nothing changed')
+    eq(a[1], 3); eq(a[2], 33, 'sorted')
+    -- a wear-off message drops the effect and must drop the cached list with it
+    local wear = string.rep('\0', 8) .. u32le(500) .. u32le(33) .. string.rep('\0', 8) .. string.char(64, 0) .. string.rep('\0', 4)
+    truthy(live.feed(0x029, wear))
+    local b = live.get(500)
+    truthy(b ~= a, 'list rebuilt after the wear-off')
+    eq(#b, 1); eq(b[1], 3)
+    -- a new status packet replaces the entry
+    live.feed(0x076, party_buff_packet(500, { 40, 41, 42 }))
+    eq(#live.get(500), 3)
+    live.reset()
+    eq(live.get(500), nil, 'zone change forgets the list too')
+end)
+
+test('frame: layout and fitted preset are reused while their inputs match, rebuilt when they change', function()
+    local cfg = new_cfg({ mode = 'alliance2', show_locked = false })
+    local fr1 = frame.build(cfg, demo, 3.0, 1920, 1080, {})
+    local fr2 = frame.build(cfg, demo, 3.1, 1920, 1080, {})
+    truthy(fr1.geom == fr2.geom, 'same options: the geometry table is reused')
+    truthy(fr1.preset == fr2.preset, 'same player: the fitted preset is reused')
+    -- reused geometry is still the right geometry
+    local fresh = require('ch.layout').compute({
+        orientation = cfg.orientation, auto_scale = cfg.auto_scale, scale = cfg.scale, groups = fr2.groups,
+        row_w = cfg.row_w, row_h = (cfg.skin == 'hairline') and cfg.hl_row_h or cfg.row_h, debuff_icon = cfg.debuff_icon,
+        buff_icon = cfg.buff_icon, mp_h = cfg.show_mp and cfg.mp_height or 0, mp_pct = cfg.show_mp_pct and cfg.mp_pct_scale or nil,
+        skin = cfg.skin, triage = cfg.triage, hl_pct = cfg.hl_pct, name_scale = cfg.name_scale, font_mult = cfg.font_mult,
+        tri_list_h = cfg.triage_opts and cfg.triage_opts.list_h, tri_list_icons = cfg.triage_opts and cfg.triage_opts.list_icons,
+        header = cfg.show_header or not cfg.locked,
+    }, 1080)
+    eq(fr2.geom.width, fresh.width); eq(fr2.geom.height, fresh.height)
+
+    cfg.scale = 1.5
+    local fr3 = frame.build(cfg, demo, 3.2, 1920, 1080, {})
+    truthy(fr3.geom ~= fr2.geom and fr3.geom.scale > fr2.geom.scale, 'a new scale gives new geometry')
+    cfg.scale = 1.0
+    local fr4 = frame.build(cfg, demo, 3.3, 1920, 1080, {})
+    eq(fr4.geom.width, fr2.geom.width, 'and back again')
+
+    local fr5 = frame.build(cfg, demo, 3.4, 1920, 2160, {})
+    truthy(fr5.geom ~= fr4.geom, 'a different window height gives new geometry')
+    cfg.mode = 'party'
+    local fr6 = frame.build(cfg, demo, 3.5, 1920, 1080, {})
+    truthy(fr6.geom.width < fr2.geom.width, 'fewer groups give a narrower panel (the group list is compared by content)')
+    -- the fitted preset follows the player: a lower level offers different spells
+    local low = { roster = demo.roster, player = function(t) local p = demo.player(t); p.level = 20; return p end }
+    local frl = frame.build(new_cfg({ show_locked = false }), low, 3.6, 1920, 1080, {})
+    truthy(frl.preset ~= fr2.preset, 'a different level rebuilds the preset')
 end)
 
 print(string.format('\n%d passed, %d failed', passed, failed))

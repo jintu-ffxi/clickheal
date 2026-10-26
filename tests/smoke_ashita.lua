@@ -353,6 +353,60 @@ test('a throwing tooltip call still ends the tooltip', function()
     balanced()
 end)
 
+test('game memory is sampled about 15 times a second, not once per frame', function()
+    run_command('/ch reset confirm'); run_command('/ch demo off')
+    local errs_before = errors_logged()
+    local active_reads = 0
+    local party = setmetatable({ GetMemberIsActive = function() active_reads = active_reads + 1; return 0 end },
+        { __index = function() return function() return nil end end })
+    local mem = setmetatable({ GetParty = function() return party end }, { __index = function() return function() return nil end end })
+    _G.AshitaCore = { GetMemoryManager = function() return mem end }
+    local start = sim.clock + 10
+    sim.clock = start
+    local frames = 120
+    for _ = 1, frames do sim.clock = sim.clock + 1 / 60; handlers.d3d_present() end   -- 2 seconds at 60 fps
+    _G.AshitaCore = nil
+    local samples = active_reads / 18          -- one scan of the 18 slots per sample
+    -- every 5th frame at 60 fps (the first one past 1/15 s): 24 samples, against 120 if it read every frame
+    truthy(samples >= 20 and samples <= 34, 'expected ~24 samples for 120 frames, got ' .. samples)
+    eq(errors_logged() - errs_before, 0)
+    run_command('/ch demo on')
+end)
+
+test('drawing reuses its point tables without mixing up coordinates', function()
+    local gfx = require('ch.gfx_imgui')
+    local seen = {}
+    local saved = draw_list.AddRectFilled
+    draw_list.AddRectFilled = function(_, p1, p2) seen[#seen + 1] = { p1[1], p1[2], p2[1], p2[2] } end
+    local ox, oy = gfx.begin_surface('BenchProbe', 0, 0, 100, 100, {})
+    truthy(ox, 'surface opened')
+    gfx.rect_filled(10, 20, 30, 40, 0xFF112233, 0)
+    gfx.rect_filled(50, 60, 5, 6, 0xFF112233, 4)      -- rounded: takes the checked path the first time
+    gfx.rect_filled(70, 80, 7, 8, 0xFF112233, 4)      -- and the direct path afterwards
+    gfx.rect_filled(1, 2, 3, 4, 0xFF112233, 0)
+    gfx.end_surface()
+    draw_list.AddRectFilled = saved
+    eq(#seen, 4)
+    local want = { { 10, 20, 40, 60 }, { 50, 60, 55, 66 }, { 70, 80, 77, 88 }, { 1, 2, 4, 6 } }
+    for n = 1, 4 do
+        for k = 1, 4 do eq(seen[n][k], want[n][k], 'rect ' .. n .. ' field ' .. k) end
+    end
+end)
+
+test('colour and text-size caches stay bounded under heavy churn and keep answering correctly', function()
+    local gfx = require('ch.gfx_imgui')
+    local errs_before = errors_logged()
+    local ox = gfx.begin_surface('BenchProbe2', 0, 0, 100, 100, {})
+    truthy(ox)
+    for c = 1, 6000 do gfx.rect_filled(0, 0, 4, 4, 0xFF000000 + c, 0) end     -- more distinct colours than the cap
+    local widths = {}
+    for n = 1, 6000 do widths[n] = gfx.text_size('name' .. n) end             -- more distinct strings than the cap
+    gfx.end_surface()
+    eq(gfx.text_size('name1'), #'name1' * 7, 'sizes are still right after the cache was emptied')
+    eq(widths[6000], #'name6000' * 7)
+    eq(errors_logged() - errs_before, 0)
+end)
+
 test('unload saves settings', function()
     local before = settings_state.saves
     handlers.unload()
