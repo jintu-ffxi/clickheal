@@ -2,7 +2,7 @@
     ClickHeal - triage.lua
     Pure logic for the Triage view: who needs help most, and which spell fits. No ImGui, no Ashita.
 
-    Priority, highest first (members a cast cannot reach are always last):
+    Priority, highest first (members a cast cannot reach are always last, KO'd members after the rest of those):
       tier 3  a deadly debuff you can remove right now (Doom, Petrify)
       tier 2  HP at or below the critical threshold
       tier 1  an important debuff you can remove (Curse, Silence, Paralysis)
@@ -34,7 +34,9 @@ end
 --- Set { spell_key = true } of the cleansing spells you can use (the preset's cleanse group).
 function triage.cleanse_set(cfg, preset, player)
     local set = {}
-    for _, k in ipairs(spells.group_keys(cfg, preset, 'cleanse', player)) do set[k] = true end
+    for _, k in ipairs(spells.group_keys(cfg, preset, 'cleanse', player)) do
+        if spells.known(k, player) then set[k] = true end
+    end
     return set
 end
 
@@ -92,6 +94,7 @@ function triage.order(roster_list, cfg, groups, can)
     table.sort(out, function(a, b)
         local ta, tb = tiers[a.slot], tiers[b.slot]
         if ta ~= tb then return ta > tb end
+        if (a.dead and true or false) ~= (b.dead and true or false) then return not a.dead end   -- among those a cast cannot reach, KO'd members are last of all
         local da, db = triage.deficit(a), triage.deficit(b)
         if da ~= db then return da > db end
         return a.slot < b.slot
@@ -121,7 +124,7 @@ function triage.cure_keys(cfg, preset, player)
     local out = {}
     for _, k in ipairs(spells.group_keys(cfg, preset, 'heal', player)) do
         local d = spells.defs[k]
-        if d and d.kind == 'cure' and triage.POTENCY[k] then out[#out + 1] = k end
+        if d and d.kind == 'cure' and triage.POTENCY[k] and spells.known(k, player) then out[#out + 1] = k end
     end
     table.sort(out, function(a, b) return triage.POTENCY[a] < triage.POTENCY[b] end)
     return out

@@ -60,7 +60,8 @@ function layout.effective(opts)
     if opts.skin == 'hairline' then
         local mph = (e.mp_h > 0) and math.max(1, math.floor(e.mp_h * 0.5)) or 0
         local top = row_h - (3 + 5 + 1 + mph + 3)                 -- room above the rail
-        local function pct_k(mp) return (top - 2 - (mp and math.max(0, 13 * mp - 3) or 0)) / 13 end
+        local lh = opts.font_mult and 15 * opts.font_mult or 13   -- the real line height when it is known
+        local function pct_k(mp) return (top - 2 - (mp and math.max(0, lh * mp - 3) or 0)) / lh end
         local k = pct_k(e.mp_pct)
         if e.mp_pct and k < math.min(e.hl_pct, 1.3) then e.mp_pct = nil; k = pct_k(nil) end
         e.hl_pct = math.max(1.0, math.min(e.hl_pct, k))
@@ -86,11 +87,14 @@ function layout.compute(opts, display_h)
 
     local eff = layout.effective(opts)
     local row_h = math.max(24, opts.row_h or base.card_h)
+    -- One line of text in base px (the game draws 15 px text times the text multiplier). Bars, tiles and strips that
+    -- hold text grow with it; without a multiplier (older callers, tests) the fixed sizes below are used.
+    local lh = opts.font_mult and (15 * opts.font_mult) or nil
 
     local g = {
         scale   = s,
         orient  = opts.orientation or 'columns',
-        header_h = (opts.header == false) and 0 or round(layout.HEADER_H * s),
+        header_h = (opts.header == false) and 0 or round(math.max(layout.HEADER_H, lh and math.ceil(lh + 3) or 0) * s),
         card_w  = round((opts.row_w or base.card_w) * s),
         -- The row is exactly as tall as the user chose; icons, percentage and extras shrink to fit (layout.effective).
         card_h  = round(row_h * s),
@@ -143,10 +147,11 @@ function layout.compute(opts, display_h)
         local T = layout.TRI
         local pad, gap = round(T.pad * s), round(T.gap * s)
         local icon_h = round(math.max(opts.debuff_icon or 14, opts.buff_icon or 14) * s)
-        local head_h, bar_h, tile_h = round(T.head_h * s), round(T.bar_h * s), round(T.tile_h * s)
+        local head_h, bar_h = round(T.head_h * s), round(T.bar_h * s)
+        local tile_h = round(math.max(T.tile_h, lh and math.ceil(2 * lh + 8) or 0) * s)   -- two lines of text and padding
         local main_h = pad + head_h + gap + bar_h + gap + icon_h + gap + tile_h + pad
         local n = math.max(0, opts.triage_n or 0)
-        local row_base = opts.tri_list_h or T.list_h
+        local row_base = math.max(opts.tri_list_h or T.list_h, lh and math.ceil(lh + 2) or 0)
         if opts.tri_list_icons then   -- icons under the name need a name line plus the icons
             row_base = math.max(row_base, 24 * (opts.font_mult or 1) + 5 + math.max(opts.debuff_icon or 14, opts.buff_icon or 14))
         end
@@ -206,8 +211,10 @@ function layout.alert_bar(opts, display_h, rows, has_more)
     local s = layout.scale(opts, display_h)
     local a = layout.ALERT
     rows = math.max(1, rows or 1)
-    local row_h, gap, pad = round(a.row_h * s), math.max(1, round(a.gap * s)), round(a.pad * s)
-    local more_h = has_more and round(16 * s) or 0   -- room for the "+N more" note inside the window
+    -- A row has to hold the spell pill: text, then its underline (the text grows with the font multiplier).
+    local lh = opts.font_mult and 15 * opts.font_mult or 0
+    local row_h, gap, pad = round(math.max(a.row_h, math.ceil(lh + 16)) * s), math.max(1, round(a.gap * s)), round(a.pad * s)
+    local more_h = has_more and round(math.max(16, math.ceil(lh + 3)) * s) or 0   -- room for the "+N more" note inside the window
     return {
         scale = s,
         w = round(a.w * s),

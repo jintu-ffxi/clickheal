@@ -261,6 +261,12 @@ ja('light_arts',      'Light Arts',      'LA',  'SCH', 10)
 ja('addendum_white',  'Addendum: White', 'AdW', 'SCH', 10, { recast = 1.0 })
 ja('sublimation',     'Sublimation',     'Sub', 'SCH', 35, { recast = 30.0 })
 ja('accession',       'Accession',       'Acc', 'SCH', 40, { recast = 1.0 })
+ja('dark_arts',       'Dark Arts',       'DA',  'SCH', 10)
+ja('addendum_black',  'Addendum: Black', 'AdB', 'SCH', 30, { recast = 1.0 })
+ja('parsimony',       'Parsimony',       'Prs', 'SCH', 10, { recast = 1.0 })
+ja('alacrity',        'Alacrity',        'Ala', 'SCH', 25, { recast = 1.0 })
+ja('ebullience',      'Ebullience',      'Ebu', 'SCH', 55, { recast = 1.0 })
+ja('manifestation',   'Manifestation',   'Man', 'SCH', 40, { recast = 1.0 })
 ja('celerity',        'Celerity',        'Cel', 'SCH', 25, { recast = 1.0 })
 ja('penury',          'Penury',          'Pen', 'SCH', 10, { recast = 1.0 })
 ja('rapture',         'Rapture',         'Rap', 'SCH', 55, { recast = 1.0 })
@@ -307,8 +313,34 @@ end
 --- True when the player's main job (or sub job at its reduced level) has the spell or ability.
 -- `who` = { job, sub, level, sublevel? }. With no level information everything counts as known.
 function spells.known(key, who)
+    return spells.availability(key, who) == nil
+end
+
+--- Why the player cannot use a spell or ability at all right now: nil when they can,
+-- 'level' (main/sub job too low, or the job never gets it; the second value says what is needed) or
+-- 'unlearned' (the level is fine but the game says the spell has not been learned: `who.learned[key] == false`).
+function spells.availability(key, who)
     local def = spells.defs[key]
-    if not def then return false end
+    if not def then return 'level' end
+    if not who or not who.level or not def.lv then return nil end
+    if not spells.level_ok(def, who) then return 'level', spells.level_text(def, who) end
+    if who.learned and who.learned[key] == false then return 'unlearned' end
+    return nil
+end
+
+--- "SCH 55" style text: the level your own job needs, else the lowest level any job needs.
+function spells.level_text(def, who)
+    local own = who and def.lv and def.lv[jobs.abbr(who.job or 0)]
+    if own then return string.format('%s %d', jobs.abbr(who.job), own) end
+    local best_job, best
+    for job, lv in pairs(def.lv or {}) do
+        if not best or lv < best then best_job, best = job, lv end
+    end
+    return best and string.format('%s %d', best_job, best) or 'a job you do not have'
+end
+
+--- True when the job levels alone allow the spell (ignores whether it was learned).
+function spells.level_ok(def, who)
     if not who or not who.level or not def.lv then return true end
     local need = def.lv[jobs.abbr(who.job or 0)]
     if need and need <= who.level then return true end
@@ -361,7 +393,7 @@ function spells.group_keys(cfg, preset, group, who)
     if custom and #custom > 0 then
         local out = {}
         for _, k in ipairs(custom) do if spells.defs[k] then out[#out + 1] = k end end
-        if who and who.level then
+        if who and who.level and not (cfg and cfg.show_locked) then
             local kept = {}
             for _, k in ipairs(out) do if spells.known(k, who) then kept[#kept + 1] = k end end
             return kept
@@ -416,11 +448,13 @@ spells.presets = {
         base  = { 'cure4', 'cure3', 'cure2', 'cure1', 'erase', 'regen3', 'poisona', 'paralyna' },
         raise = { 'raise2', 'raise1' },
         buffs = { 'regen3', 'regen2', 'stoneskin', 'protect4', 'shell4', 'aquaveil', 'sneak', 'invisible' },
-        self  = { 'light_arts', 'addendum_white', 'celerity', 'penury', 'accession', 'rapture', 'sublimation', 'tabula_rasa' },
+        self  = { 'light_arts', 'dark_arts', 'addendum_white', 'addendum_black', 'celerity', 'penury', 'accession',
+                  'rapture', 'sublimation', 'tabula_rasa' },
         bar = {
             heal    = { 'cure1', 'cure2', 'cure3', 'cure4', 'regen1', 'regen2', 'regen3' },
             cleanse = { 'poisona', 'paralyna', 'blindna', 'silena', 'cursna', 'erase', 'viruna', 'stona' },
-            buff    = { 'stoneskin', 'protect4', 'shell4', 'blink', 'aquaveil', 'sneak', 'invisible' },
+            buff    = { 'stoneskin', 'protect4', 'shell4', 'blink', 'aquaveil', 'sneak', 'invisible', 'deodorize',
+                        'firestorm', 'hailstorm', 'windstorm', 'sandstorm', 'thunderstorm', 'rainstorm', 'aurorastorm', 'voidstorm' },
             raise   = { 'raise1', 'raise2', 'reraise1', 'reraise2' },
         },
     },
@@ -428,11 +462,13 @@ spells.presets = {
         base  = { 'cure4', 'cure3', 'cure2', 'cure1' },
         raise = { 'raise1' },
         buffs = { 'haste', 'refresh', 'flurry', 'phalanx2', 'phalanx', 'stoneskin', 'protect4', 'shell4', 'blink' },
-        self  = { 'convert', 'composure', 'chainspell' },
+        self  = { 'convert', 'composure', 'chainspell', 'blaze_spikes', 'ice_spikes', 'shock_spikes' },
         bar = {
-            heal    = { 'cure1', 'cure2', 'cure3', 'cure4' },
+            heal    = { 'cure1', 'cure2', 'cure3', 'cure4', 'regen1' },
             cleanse = {},
-            buff    = { 'haste', 'refresh', 'flurry', 'phalanx2', 'phalanx', 'stoneskin', 'protect4', 'shell4', 'blink' },
+            buff    = { 'haste', 'refresh', 'flurry', 'phalanx2', 'phalanx', 'stoneskin', 'protect4', 'shell4', 'blink',
+                        'aquaveil', 'sneak', 'invisible', 'deodorize', 'enfire', 'enblizzard', 'enaero', 'enstone',
+                        'enthunder', 'enwater' },
             raise   = { 'raise1' },
         },
     },

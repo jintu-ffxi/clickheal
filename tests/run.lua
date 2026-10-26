@@ -42,6 +42,7 @@ local function truthy(v, msg) if not v then error(msg or 'expected truthy', 2) e
 local function new_cfg(over)
     local c = chconfig.sanitize({})
     c.alerts.enabled = true        -- the alert window is off by default; the alert tests need it on
+    c.skin = 'solid'               -- most tests are about the solid rows; the default skin is hairline
     ui.reset_state()
     require('ch.casting').reset()     -- no busy state left over from an earlier test
     for k, v in pairs(over or {}) do c[k] = v end
@@ -717,6 +718,37 @@ local function draw_fly(f, plan, input)
     return ff, g
 end
 
+test('flyout: spells above your level or not learned are greyed (show_locked) or absent, never castable', function()
+    local function plan_for(over)
+        local cfg = new_cfg({ mode = 'party', show_locked = over.show_locked })
+        local f0, fr = fly_frame(cfg)
+        local cell = hb_of(f0, function(h) return h.kind == 'cell' and h.slot == 1 end)
+        local f = fly_frame(cfg, gfx_rec.input(cell.x + 3, cell.y + 3, nil))
+        f.player = { job = 20, sub = 3, level = 40, sublevel = 20, mp = 400, mpmax = 400, recast = {},
+                     learned = { cure2 = false } }
+        local preset = spells.presets.SCH
+        f.preset = cfg.show_locked and preset or spells.fit(preset, f.player)
+        return ui.flyout_plan(f), f
+    end
+    local function keys(plan)
+        local set = {}
+        for _, gp in ipairs(plan.groups) do for _, k in ipairs(gp.keys) do set[k] = true end end
+        return set
+    end
+    local hidden = keys((plan_for({})))
+    truthy(hidden.cure1 and not hidden.cure2 and not hidden.cure4, 'only usable spells are listed')
+    local plan, f = plan_for({ show_locked = true })
+    local all = keys(plan)
+    truthy(all.cure1 and all.cure2 and all.cure4, 'show_locked lists them')
+    local ff, g = draw_fly(f, plan)
+    local clicked = {}
+    for _, e in ipairs(ff.events) do clicked[#clicked + 1] = e end
+    eq(#clicked, 0)
+    local m = f.roster[1]
+    eq((spellstate.evaluate(spells.defs.cure4, m, f.player, f.cfg)), 'level')
+    eq((spellstate.evaluate(spells.defs.cure2, m, f.player, f.cfg)), 'unlearned')
+end)
+
 test('flyout: hovering a strip/grid row opens it beside the row, inside the screen', function()
     for _, style in ipairs({ 'strip', 'grid' }) do
         local cfg = new_cfg({ style = style, mode = 'party' })
@@ -863,6 +895,60 @@ test('catalog: fit() cuts presets down and falls back to lower tiers', function(
     local rdm = spells.fit(spells.presets.RDM, who(J.RDM, 75))
     eq(#rdm.bar.cleanse, 0)
     eq(spells.fit(spells.presets.WHM, { job = 3 }), spells.presets.WHM, 'no level: untouched')
+end)
+
+test('availability: too-low level and unlearned spells are told apart, and greyed or hidden by show_locked', function()
+    local sc = who(J.SCH, 40)
+    local why, need = spells.availability('cure4', sc)
+    eq(why, 'level'); truthy(need:find('55', 1, true), 'Cure IV needs SCH 55: ' .. tostring(need))
+    eq(spells.availability('cure2', sc), nil)
+    sc.learned = { cure2 = false, cure1 = true }
+    eq(spells.availability('cure2', sc), 'unlearned', 'level is fine but the scroll is missing')
+    truthy(not spells.known('cure2', sc))
+    eq(spells.best('cure2', sc), 'cure1', 'a missing tier falls back to the highest one learned')
+    eq(spells.availability('cure1', who(J.SCH, 40)), nil, 'no learned table: level only')
+
+    -- spellstate says why
+    local m = { active = true, slot = 1, hp = 100, hpmax = 100, dist = 5 }
+    local cfg = new_cfg({})
+    local pl = { job = J.SCH, level = 40, sub = 0, mp = 500, recast = {} }
+    eq((spellstate.evaluate(spells.defs.cure4, m, pl, cfg)), 'level')
+    pl.learned = { cure2 = false }
+    eq((spellstate.evaluate(spells.defs.cure2, m, pl, cfg)), 'unlearned')
+    eq((spellstate.evaluate(spells.defs.cure1, m, pl, cfg)), 'ready')
+    truthy(spellstate.describe('level', 'SCH 55'):find('SCH 55', 1, true))
+    eq(spellstate.describe('unlearned'), 'Not learned yet')
+
+    -- the menu: hidden by default, greyed with show_locked
+    local preset = spells.presets.SCH
+    local fit = spells.fit(preset, sc)
+    local function has(list, k) for _, x in ipairs(list) do if x == k then return true end end return false end
+    truthy(not has(fit.bar.heal, 'cure4') and not has(fit.bar.heal, 'cure2'), 'cannot-use spells are not offered')
+    local shown = spells.group_keys({ show_locked = true, spell_order = { heal = { 'cure1', 'cure2', 'cure4' } } }, preset, 'heal', sc)
+    truthy(has(shown, 'cure4') and has(shown, 'cure2'), 'show_locked keeps them in a custom order')
+    local hidden = spells.group_keys({ spell_order = { heal = { 'cure1', 'cure2', 'cure4' } } }, preset, 'heal', sc)
+    truthy(not has(hidden, 'cure4') and not has(hidden, 'cure2') and has(hidden, 'cure1'))
+end)
+
+test('presets: scholar and red mage offer their default spells and abilities', function()
+    local function has(list, k) for _, x in ipairs(list or {}) do if x == k then return true end end return false end
+    local sch = spells.fit(spells.presets.SCH, who(J.SCH, 75))
+    for _, k in ipairs({ 'cure4', 'regen3' }) do truthy(has(sch.bar.heal, k), 'SCH heals ' .. k) end
+    for _, k in ipairs({ 'cursna', 'erase', 'viruna' }) do truthy(has(sch.bar.cleanse, k), 'SCH cleanses ' .. k) end
+    for _, k in ipairs({ 'stoneskin', 'firestorm', 'aurorastorm', 'protect4' }) do truthy(has(sch.bar.buff, k), 'SCH buffs ' .. k) end
+    for _, k in ipairs({ 'light_arts', 'dark_arts', 'addendum_white', 'addendum_black', 'sublimation', 'tabula_rasa' }) do
+        truthy(has(sch.self, k), 'SCH ability ' .. k)
+    end
+    local rdm = spells.fit(spells.presets.RDM, who(J.RDM, 75))
+    for _, k in ipairs({ 'cure4', 'regen1' }) do truthy(has(rdm.bar.heal, k), 'RDM heals ' .. k) end
+    for _, k in ipairs({ 'haste', 'refresh', 'flurry', 'phalanx2', 'stoneskin', 'enfire', 'enthunder' }) do truthy(has(rdm.bar.buff, k), 'RDM buffs ' .. k) end
+    for _, k in ipairs({ 'convert', 'composure', 'chainspell', 'blaze_spikes' }) do truthy(has(rdm.self, k), 'RDM ability ' .. k) end
+    -- a low level scholar does not get what it has not reached
+    local lo = spells.fit(spells.presets.SCH, who(J.SCH, 20))
+    truthy(not has(lo.self, 'addendum_black') and not has(lo.self, 'sublimation') and has(lo.self, 'light_arts'))
+    truthy(not has(lo.bar.buff, 'firestorm'))
+    -- Chainspell is a 2-hour: not available through a sub job
+    truthy(not spells.known('chainspell', who(J.WHM, 75, J.RDM, 37)))
 end)
 
 test('catalog: presets resolve for all five jobs', function()
@@ -1559,7 +1645,8 @@ test('triage: neediest first, unreachable members last, featured member is stick
     local a, b, c, d = mem(0, 900, 1000), mem(1, 300, 1000), mem(2, 100, 1000, { dist = 40 }), mem(3, 0, 1000, { dead = true })
     local list = triage.order({ a, b, c, d }, cfg)
     eq(list[1].slot, 1); eq(list[2].slot, 0)
-    eq(list[#list].slot >= 2, true, 'out of range and KO go last')
+    eq(list[3].slot, 2, 'out of range goes after everyone a cast can reach')
+    eq(list[4].slot, 3, 'a KO is last of all, even though it is missing the most HP')
     eq(triage.pick(list, cfg, nil).slot, 1)
     local e = mem(4, 280, 1000)                     -- slightly worse than b: the panel stays on b
     eq(triage.pick(triage.order({ a, b, e }, cfg), cfg, 1).slot, 1)
@@ -1587,7 +1674,7 @@ test('hairline: the big percentage is colored by health and is drawn scaled; no 
     local n = 0; for _ in pairs(seen) do n = n + 1 end
     truthy(n >= 2, 'different health, different colors')
     eq(#pct_colors('solid'), 0, 'solid skin has no large percentages')
-    eq(chconfig.sanitize({ skin = 'nope' }).skin, 'solid')
+    eq(chconfig.sanitize({ skin = 'nope' }).skin, chconfig.defaults.skin)
 end)
 
 test('triage view: panel geometry, featured member, cure tiles cast on the featured member', function()

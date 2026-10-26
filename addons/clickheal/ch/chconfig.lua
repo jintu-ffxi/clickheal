@@ -64,7 +64,7 @@ chconfig.defaults = {
     group_alpha      = 0.12,        -- how strong those backgrounds are
     group_frames     = true,        -- a border and tint around each party (party, alliance 1, alliance 2)
     show_header      = true,        -- the CLICKHEAL / MOVE / CFG bar above the rows (shown anyway while unlocked)
-    skin             = 'solid',     -- row style: solid (filled HP row) or hairline (type and a thin rail)
+    skin             = 'hairline',  -- row style: solid (filled HP row) or hairline (type and a thin rail)
     triage           = false,       -- one panel for whoever needs healing most, plus a compact list
     hl_pct           = 2.0,         -- hairline: size of the big HP percentage
     show_mp          = true,
@@ -74,6 +74,7 @@ chconfig.defaults = {
     mp_pct_scale     = 0.75,        -- size of that MP percent relative to the HP percent
     show_buff_bar    = true,        -- second strip of buff icons on each row
     buffs_mine_only  = true,        -- buff bar: only buffs your job can cast
+    show_locked      = false,       -- flyout also lists spells you cannot use yet (too low a level, not learned), greyed out
     flyout_icons     = false,       -- flyout buttons show the spell's game icon (status icon / your own PNG) instead of text
     flyout           = true,        -- hover a member to open their spell flyout
     spell_order      = {},          -- group -> ordered spell keys (same for every member); empty = job default
@@ -223,7 +224,7 @@ function chconfig.sanitize(s)
             s.spell_order[group] = (#clean > 0) and clean or nil
         end
     end
-    for _, k in ipairs({ 'flyout', 'show_buff_bar', 'buffs_mine_only', 'queue_clicks', 'show_mp_pct', 'triage', 'demo_fill', 'flyout_icons', 'show_header', 'group_frames' }) do
+    for _, k in ipairs({ 'flyout', 'show_buff_bar', 'buffs_mine_only', 'queue_clicks', 'show_mp_pct', 'triage', 'demo_fill', 'flyout_icons', 'show_locked', 'show_header', 'group_frames' }) do
         s[k] = s[k] and true or false
     end
     return s

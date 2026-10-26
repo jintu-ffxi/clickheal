@@ -253,7 +253,7 @@ end)
 test('setup panel: every user-facing setting has a control somewhere', function()
     seen_ids = {}
     local variants = {
-        { demo = false }, { demo = true }, { skin = 'hairline' }, { show_mp_pct = true }, { show_buff_bar = true },
+        { demo = false }, { demo = true }, { skin = 'solid' }, { show_mp_pct = true }, { show_buff_bar = true },
         { auto_scale = false },
     }
     for _, over in ipairs(variants) do

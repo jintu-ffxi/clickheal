@@ -394,6 +394,7 @@ local function page_flyout(s)
     local changed = false
     section('Spell menu on hover')
     changed = checkbox('Open on hover', s, 'flyout', 'Hover a member to open their spell buttons beside the row.') or changed
+    changed = checkbox('Show spells I cannot use yet', s, 'show_locked', 'Off: the menu only lists spells you can cast. On: spells above your level, or that you have not learned, are listed greyed out (hover for why).') or changed
     changed = checkbox('Show spell icons', s, 'flyout_icons', 'Buff and cleanse buttons show the game\'s status icon (Haste, Poison...). Put your own PNGs in assets/spells/<spell key>.png to cover any spell, for example cure4.png. Spells without an icon keep their text.') or changed
     changed = slider_int('Button size', s, 'fly_btn', 24, 64, 'In pixels at 1080p; scales with the game resolution.') or changed
     changed = slider_int('Button spacing', s, 'fly_gap', 2, 16) or changed

@@ -7,6 +7,9 @@
 package.path = 'addons/clickheal/?.lua;' .. package.path
 
 local out_dir = arg[1] or 'preview_out'
+local MEDIA = arg[2] == 'media'      -- README media: real font metrics and a different scenario list
+local ICONS = MEDIA and arg[3] == 'icons'   -- draw the game's status icons (tools/preview.py needs them locally)
+local METRICS = MEDIA and dofile('tools/font_widths.lua') or nil
 
 local chconfig = require('ch.chconfig')
 local frame    = require('ch.frame')
@@ -22,6 +25,7 @@ local function esc(s)
 end
 
 local function to_json(cmds, w, h, fs)
+    local seg = METRICS and 'true' or 'false'
     local parts = {}
     for _, c in ipairs(cmds) do
         if c.op == 'rect' then
@@ -33,13 +37,15 @@ local function to_json(cmds, w, h, fs)
                 c.p[1], c.p[2], c.p[3], c.p[4], c.p[5], c.p[6], c.p[7], c.p[8], c.c, c.t or 0)
         elseif c.op == 'text' then
             parts[#parts + 1] = string.format('{"op":"text","x":%.2f,"y":%.2f,"c":%.0f,"k":%.3f,"s":"%s"}', c.x, c.y, c.c, c.k or 1, esc(c.s))
+        elseif c.op == 'icon' then
+            parts[#parts + 1] = string.format('{"op":"icon","x":%.2f,"y":%.2f,"w":%.2f,"id":%d}', c.x, c.y, c.w, c.id)
         elseif c.op == 'tooltip' then
             local ls = {}
             for _, l in ipairs(c.lines) do ls[#ls + 1] = '"' .. esc(l) .. '"' end
             parts[#parts + 1] = '{"op":"tooltip","lines":[' .. table.concat(ls, ',') .. ']}'
         end
     end
-    return string.format('{"w":%d,"h":%d,"fs":%.4f,"cmds":[%s]}', w, h, fs, table.concat(parts, ','))
+    return string.format('{"w":%d,"h":%d,"fs":%.4f,"seg":%s,"cmds":[%s]}', w, h, fs, seg, table.concat(parts, ','))
 end
 
 local function scenario(name, over, disp_w, disp_h, t, mouse)
@@ -50,7 +56,9 @@ local function scenario(name, over, disp_w, disp_h, t, mouse)
     ui.reset_state()
 
     local fr = frame.build(cfg, demo, t, disp_w, disp_h, {})
-    local g = gfx_rec.new(fr.geom.scale * cfg.font_mult)
+    if type(mouse) == 'function' then mouse = mouse(fr) end
+    local g = gfx_rec.new(fr.geom.scale * cfg.font_mult, METRICS)
+    g.has_icons = ICONS
     local ox, oy = 0, 0
     local f = {
         gfx = g, geom = fr.geom, cfg = cfg, pal = fr.pal, roster = fr.roster, groups = fr.groups, player = fr.player,
@@ -63,7 +71,8 @@ local function scenario(name, over, disp_w, disp_h, t, mouse)
     -- Hover flyout, rendered into its own recording at its own position.
     local plan = ui.flyout_plan(f)
     if plan then
-        local g3 = gfx_rec.new(fr.geom.scale * cfg.font_mult)
+        local g3 = gfx_rec.new(fr.geom.scale * cfg.font_mult, METRICS)
+        g3.has_icons = ICONS
         local ff = {
             gfx = g3, geom = fr.geom, cfg = cfg, pal = fr.pal, roster = fr.roster, groups = fr.groups, player = fr.player,
             preset = fr.preset, now = t, ox = 0, oy = 0, events = {}, plan = plan,
@@ -77,7 +86,8 @@ local function scenario(name, over, disp_w, disp_h, t, mouse)
     end
 
     -- Alert bar rendered into its own recording.
-    local g2 = gfx_rec.new(fr.geom.scale * cfg.font_mult)
+    local g2 = gfx_rec.new(fr.geom.scale * cfg.font_mult, METRICS)
+    g2.has_icons = ICONS
     local fa = {
         gfx = g2, geom = fr.geom, cfg = cfg, pal = fr.pal, roster = fr.roster, groups = fr.groups, player = fr.player,
         preset = fr.preset, now = t, ox = 0, oy = 0, events = {},
@@ -96,6 +106,7 @@ local function scenario(name, over, disp_w, disp_h, t, mouse)
         name, rw, rh, fr.abar.w, fr.abar.h, #fr.alerts, fr.alert_total))
 end
 
+if not MEDIA then
 -- name, settings overrides, display w, h, time, mouse (optional)
 scenario('strip_party_1080',      { mode = 'party' },     1920, 1080, 3.0)
 scenario('strip_alliance1_1080',  { mode = 'alliance1' }, 1920, 1080, 3.0)
@@ -122,3 +133,51 @@ scenario('triage_alliance_icons',    { mode = 'alliance2', triage = true, triage
 scenario('triage_alliance',        { mode = 'alliance1', triage = true, skin = 'hairline' }, 1920, 1080, 3.0)
 scenario('strip_rows_alliance2_unlocked', { mode = 'alliance2', orientation = 'rows', locked = false }, 1920, 1080, 3.0)
 scenario('strip_unlocked',        { mode = 'party', locked = false }, 1920, 1080, 3.0)
+end
+
+if MEDIA then
+    -- README pictures. Stills at 4K for sharp text; animation frames at 1440p to keep the GIFs small.
+    local function over_slot(slot, fx, fy)
+        return function(fr)
+            local c = fr.geom.cards[slot]
+            return { c.x + c.w * (fx or 0.5), c.y + c.h * (fy or 0.5) }
+        end
+    end
+    -- README look: the hairline skin with job colors, drawn smaller so it reads crisp and compact.
+    local function ms(name, over, ...)
+        local o = { skin = 'hairline', colors = 'job', scale = 0.8, flyout_icons = ICONS,
+                    hl_row_h = 64, show_header = false, group_frames = false, show_dist = false, show_mp = false, show_mp_pct = true }
+        for k, v in pairs(over) do o[k] = v end
+        return scenario(name, o, ...)
+    end
+    ms('media_hero',     { mode = 'alliance1' }, 3840, 2160, 3.0, over_slot(2))
+    ms('media_alerts',   { mode = 'party', alerts = { enabled = true } }, 3840, 2160, 3.0)
+
+    -- frames of the animations (a number in the name, in order)
+    for i = 0, 47 do
+        ms(string.format('anim_party_%03d', i), { mode = 'party' }, 2560, 1440, 1.0 + i * 0.25)
+    end
+    local hovered = { 0, 1, 2, 3, 4, 5, 6, 7, 8 }
+    for i = 0, #hovered * 4 - 1 do
+        ms(string.format('anim_flyout_%03d', i), { mode = 'alliance1', demo_alliance_debuffs = true }, 2560, 1440,
+            3.0 + i * 0.2, over_slot(hovered[math.floor(i / 4) + 1], 0.45, 0.5))
+    end
+    for i = 0, 39 do
+        ms(string.format('anim_triage_%03d', i),
+            { mode = 'alliance1', triage = true, triage_opts = { list_icons = true, list_h = 36 } }, 2560, 1440, 2.0 + i * 0.3)
+    end
+    local modes = {
+        { mode = 'party' },
+        { mode = 'alliance1' },
+        { mode = 'alliance2', demo_alliance_debuffs = true },
+        { mode = 'alliance1', orientation = 'stacked' },
+        { mode = 'alliance1', orientation = 'rows' },
+        { mode = 'alliance1', skin = 'hairline', colors = 'job' },
+        { mode = 'alliance1', triage = true, triage_opts = { list_icons = true, list_h = 36 } },
+    }
+    for k, over in ipairs(modes) do
+        for j = 0, 5 do
+            ms(string.format('anim_modes_%03d', (k - 1) * 6 + j), over, 2560, 1440, 2.0 + (k * 6 + j) * 0.25)
+        end
+    end
+end

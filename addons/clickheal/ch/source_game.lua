@@ -252,6 +252,23 @@ function game.roster(_, _)
     return out
 end
 
+-- Which spells the game says you have learned: { [key] = true/false }. Only filled when HasSpell works on this
+-- build; re-read every few seconds, since a scroll can be learned at any time.
+local learned_cache, learned_at = nil, -100
+local function read_learned(player)
+    local now = os.clock()
+    if learned_cache and now - learned_at < 3 then return learned_cache end
+    local out, any = {}, false
+    for key, info in pairs(ids) do
+        if info.spell then
+            local has = call(player, 'HasSpell', info.spell)
+            if has ~= nil then out[key] = (has == true or has == 1); any = true end
+        end
+    end
+    learned_cache, learned_at = any and out or nil, now
+    return learned_cache
+end
+
 --- Your own state for button availability.
 function game.player(_)
     local party, player, _, rc = managers()
@@ -273,6 +290,7 @@ function game.player(_)
         mpmax = call(player, 'GetMPMax') or 0,
         silenced = silenced, incapacitated = stopped,
         recast = recast, recast_total = recast_total,
+        learned = read_learned(player),
     }
 end
 

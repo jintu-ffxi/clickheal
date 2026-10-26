@@ -9,8 +9,10 @@
 
 local M = {}
 
-function M.new(font_scale)
-    local g = { cmds = {}, font_scale = font_scale or 1 }
+--- `widths` (optional): { em, avg, w = { [byte] = advance } } measures text with a real font (Segoe UI, from
+-- tools/font_widths.lua) at the 15 px the addon uses, instead of the 7 px per character stand-in. For previews.
+function M.new(font_scale, widths)
+    local g = { cmds = {}, font_scale = font_scale or 1, seg = widths ~= nil }
 
     function g.rect_filled(x, y, w, h, c, r)
         g.cmds[#g.cmds + 1] = { op = 'rect', x = x, y = y, w = w, h = h, c = c, r = r or 0 }
@@ -39,6 +41,11 @@ function M.new(font_scale)
     end
 
     function g.text_size(s)
+        if widths then
+            local w = 0
+            for i = 1, #s do w = w + (widths.w[s:byte(i)] or widths.avg) end
+            return w / widths.em * 15 * g.font_scale, 15 * g.font_scale
+        end
         return #s * 7 * g.font_scale, 13 * g.font_scale
     end
 

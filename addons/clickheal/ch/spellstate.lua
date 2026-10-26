@@ -10,6 +10,8 @@
     Returns state, detail
       'ready'      - castable
       'gone'       - slot empty / member not active
+      'level'      - your job level is too low for it         (detail = "WHM 25": who needs what)
+      'unlearned'  - level is fine but you have not learned it yet
       'zone'       - member is in a different zone
       'dead'       - target is KO'd (non-raise spell)
       'alive'      - raise spell on a living target
@@ -20,10 +22,16 @@
       'busy'       - mid-cast or in the delay after an action (detail = seconds left); a click is queued
 ]]--
 
+local spells = require('ch.spells')
+
 local spellstate = {}
 
 function spellstate.evaluate(def, member, player, cfg)
     if not member or not member.active then return 'gone' end
+
+    -- Not yours to use at all (too low a level, or the scroll was never learned): nothing else matters.
+    local why, need = spells.availability(def.key, player)
+    if why then return why, need end
 
     -- Self job abilities: not blocked by silence or distance; only a KO'd you or a recast stops them.
     if def.ja and def.self then
@@ -75,6 +83,8 @@ end
 function spellstate.describe(state, detail)
     if state == 'ready'   then return 'Ready' end
     if state == 'gone'    then return 'No member' end
+    if state == 'level'   then return 'Needs ' .. tostring(detail or 'a higher level') end
+    if state == 'unlearned' then return 'Not learned yet' end
     if state == 'zone'    then return 'In another zone' end
     if state == 'dead'    then return 'Target is KO' end
     if state == 'alive'   then return 'Target is not KO' end

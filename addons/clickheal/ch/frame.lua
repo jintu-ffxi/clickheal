@@ -60,7 +60,8 @@ function frame.build(cfg, source, t, disp_w, disp_h, dismissed)
 
     local player = casting.decorate(source.player(t), t)
     local preset, preset_name = spells.preset_for(player.job, player.sub)
-    preset = spells.fit(preset, player)   -- only what the player has learned (sub job at half level)
+    -- Only what the player can use (sub job at half level, learned spells), unless they asked to see the rest greyed out.
+    if not cfg.show_locked then preset = spells.fit(preset, player) end
 
     local groups = layout.groups_for(cfg.mode, true, present)
     local lopts = {

@@ -98,13 +98,21 @@ local function click_button(f)
     return nil
 end
 
+--- Text size for a small tag that must fit a box `h` tall: 1 normally, smaller when the text line is taller than the box.
+local function tag_scale(g, h, s)
+    local th = select(2, g.text_size('Ag'))
+    if th <= 0 then return 1 end
+    return min(1, (h - 2 * floor(1 * s)) / th)
+end
+
 --- A small rounded label. Returns its width.
 local function chip(f, x, y, h, text, fg, bg, dim)
     local g, s = f.gfx, f.geom.scale
-    local tw, th = g.text_size(text)
+    local k = tag_scale(g, h, s)
+    local tw, th = g.text_size_scaled(text, k)
     local w = tw + floor(7 * s)
     g.rect_filled(x, y, w, h, A(bg, dim), floor(3 * s))
-    g.text(x + floor(3.5 * s), y + floor((h - th) / 2), A(fg, dim), text)
+    g.text_scaled(x + floor(3.5 * s), y + floor((h - th) / 2), A(fg, dim), text, k)
     return w
 end
 
@@ -328,18 +336,19 @@ local function draw_debuff_strip(f, m, x, y, w, h, dim)
     local gap = max(1, floor(3 * s))
     local pad = floor(6 * s)
     local cx, shown = x, 0
-    local more_w = g.text_size('+9') + pad
+    local tk = tag_scale(g, h, s)
+    local more_w = g.text_size_scaled('+9', tk) + pad
     for i, key in ipairs(list) do
         local info = debuffs.info[key]
         local icon_ok = false
         local iw = h
         local label = info.short
-        local tw = g.text_size(label) + pad
+        local tw = g.text_size_scaled(label, tk) + pad
         local need = (g.status_icon and debuffs.id_of[key]) and iw or tw
         local reserve = (i < #list) and (more_w + gap) or 0
         if cx + need + reserve > x + w then
             local extra = '+' .. (#list - i + 1)
-            local ew = g.text_size(extra) + floor(7 * s)
+            local ew = g.text_size_scaled(extra, tk) + floor(7 * s)
             if cx + ew <= x + w then chip(f, cx, y, h, extra, pal.text, pal.btn_hot, dim) end
             break
         end
@@ -359,8 +368,8 @@ local function draw_debuff_strip(f, m, x, y, w, h, dim)
             local w = tw
             g.rect_filled(cx, y, w, h, theme.pack(0.04, 0.05, 0.07, 0.88 * dim), floor(3 * s))
             outline(g, cx, y, w, h, max(1, floor(1 * s)), A(col, 0.85 * dim))
-            local lw, lh = g.text_size(label)
-            g.text(cx + floor((w - lw) / 2), y + floor((h - lh) / 2), A(col, dim), label)
+            local lw, lh = g.text_size_scaled(label, tk)
+            g.text_scaled(cx + floor((w - lw) / 2), y + floor((h - lh) / 2), A(col, dim), label, tk)
             cx = cx + tw + gap
         end
         shown = shown + 1
@@ -387,17 +396,18 @@ local function draw_buff_strip(f, m, list, x, y, w, h, dim)
     local gap = max(1, floor(3 * s))
     local pad = floor(6 * s)
     local cx, shown = x, 0
-    local more_w = g.text_size('+9') + pad
+    local tk = tag_scale(g, h, s)
+    local more_w = g.text_size_scaled('+9', tk) + pad
     local th = max(1, floor(2 * s))
     for i, b in ipairs(list) do
         local label = b.info.short
-        local tw = g.text_size(label) + pad
+        local tw = g.text_size_scaled(label, tk) + pad
         local sid = buffs.id_of[b.key]
         local need = (g.status_icon and sid) and h or tw
         local reserve = (i < #list) and (more_w + gap) or 0
         if cx + need + reserve > x + w then
             local extra = '+' .. (#list - i + 1)
-            if cx + g.text_size(extra) + floor(7 * s) <= x + w then chip(f, cx, y, h, extra, pal.text, pal.btn_hot, dim) end
+            if cx + g.text_size_scaled(extra, tk) + floor(7 * s) <= x + w then chip(f, cx, y, h, extra, pal.text, pal.btn_hot, dim) end
             break
         end
         local urg = buffs.urgency(b.rem)
@@ -407,8 +417,8 @@ local function draw_buff_strip(f, m, list, x, y, w, h, dim)
             if cx + tw > x + w then break end
             iw = tw
             g.rect_filled(cx, y, tw, h, theme.pack(0.04, 0.05, 0.07, 0.88 * dim), floor(3 * s))
-            local lw, lh = g.text_size(label)
-            g.text(cx + floor((tw - lw) / 2), y + floor((h - lh) / 2), A(pal.kind.buff or pal.accent, dim), label)
+            local lw, lh = g.text_size_scaled(label, tk)
+            g.text_scaled(cx + floor((tw - lw) / 2), y + floor(max(0, h - th - lh) / 2), A(pal.kind.buff or pal.accent, dim), label, tk)   -- above the timer line
         end
         if b.rem and b.total and b.total > 0 then
             local lc, la = pal.kind.buff or pal.accent, 0.85
@@ -533,8 +543,9 @@ local function draw_strip(f, m, r, out_of_range, near_limit, dim)
     g.rect_filled(r.x, r.y, bw, r.h, A(block, 0.92 * dim), floor(3 * s))
     local abbr = jobs.abbr(m.job)
     local fg = (f.cfg.colors == 'mono') and pal.text or theme.pack(0.07, 0.08, 0.10, 1.0)
-    local aw = g.text_size(abbr)
-    g.text(r.x + floor((bw - aw) / 2), r.y + floor((r.h - th) / 2) - floor(2 * s), A(fg, dim), abbr)
+    local ak = min(1, (bw - floor(4 * s)) / max(1, g.text_size(abbr)))   -- the code must fit its block
+    local aw = g.text_size_scaled(abbr, ak)
+    g.text_scaled(r.x + floor((bw - aw) / 2), r.y + floor((r.h - th * ak) / 2) - floor(2 * s), A(fg, dim), abbr, ak)
 
     -- Slanted row background (+ outline when it is the open row).
     local bg
@@ -812,9 +823,12 @@ local function draw_hairline(f, m, r, out_of_range, near_limit, dim)
     if eff(f).mp_pct and m.mpmax and m.mpmax > 0 and not m.dead then
         local k2 = eff(f).mp_pct
         local mpt = string.format('%d%%', floor(100 * max(0, min(1, (m.mp or 0) / m.mpmax)) + 0.5))
-        local mw = g.text_size_scaled(mpt, k2)
-        g.text_scaled(xr - mw, py + nh - floor(2 * s), A(pal.mp, dim), mpt, k2)
-        left = min(left, xr - mw)
+        local mw, mh = g.text_size_scaled(mpt, k2)
+        -- Stacked under the big number, right-aligned, kept clear of the rail along the bottom of the row.
+        local mx = xr - mw
+        local my = min(py + nh - floor(1 * s), r.y + r.h - floor(9 * s) - mh)
+        g.text_scaled(mx, my, A(pal.mp, dim), mpt, k2)
+        left = min(left, mx)
     end
     local limit = left - floor(10 * s)
 
@@ -946,7 +960,7 @@ local function natural_size(f, orient)
         orientation = orient, auto_scale = c.auto_scale, scale = 1.0, groups = f.groups,
         row_w = c.row_w, row_h = (c.skin == 'hairline') and c.hl_row_h or c.row_h,
         debuff_icon = c.debuff_icon, buff_icon = c.buff_icon, mp_h = c.show_mp and c.mp_height or 0,
-        mp_pct = c.show_mp_pct and c.mp_pct_scale or nil, skin = c.skin, hl_pct = c.hl_pct, name_scale = c.name_scale,
+        mp_pct = c.show_mp_pct and c.mp_pct_scale or nil, skin = c.skin, hl_pct = c.hl_pct, name_scale = c.name_scale, font_mult = c.font_mult,
         header = c.show_header or not c.locked,
     }
     local g = layout.compute(o, f.disp_h or 1080)
@@ -1359,9 +1373,10 @@ function ui.draw_alerts(f)
             local pbg = hot and ready and theme.mix(pal.btn_hot, pal.accent, 0.30) or pal.btn_hot
             g.rect_filled(px, py, pw, ph, ready and pbg or A(pal.btn, 0.8), floor(3 * s))
             local kc = pal.kind[def.kind] or pal.accent
-            g.rect_filled(px + floor(5 * s), py + ph - max(2, floor(2 * s)) - floor(2 * s),
-                pw - floor(10 * s), max(2, floor(2 * s)), A(kc, ready and 0.85 or 0.3), 0)
-            g.text(px + floor(8 * s), py + floor((ph - th) / 2) - floor(2 * s),
+            local kh = max(2, floor(2 * s))   -- the colored underline sits in the pill's bottom edge, under the text
+            g.rect_filled(px + floor(5 * s), py + ph - kh - floor(1 * s),
+                pw - floor(10 * s), kh, A(kc, ready and 0.85 or 0.3), 0)
+            g.text(px + floor(8 * s), py + floor((ph - kh - floor(1 * s) - th) / 2),
                 ready and pal.text or pal.text_dim, label)
 
             if not ready and state ~= 'recast' then
