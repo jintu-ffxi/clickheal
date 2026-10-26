@@ -27,6 +27,8 @@ local actions  = require('ch.actions')
 local demo     = require('ch.source_demo')
 local gfx      = require('ch.gfx_imgui')
 local configui = require('ch.configui')
+local casting  = require('ch.casting')
+local chatstatus = require('ch.chatstatus')
 local apicheck = require('ch.apicheck')
 local bindings = require('ch.bindings')
 local spells   = require('ch.spells')
@@ -69,8 +71,12 @@ end
 -- ---------------------------------------------------------------------------------------------
 
 ashita.events.register('load', 'clickheal_load', function()
-    log('Loaded (Phase 1: interface preview, demo data only - nothing is sent to the game).')
+    log('Loaded. Casting is off until you turn it on (/ch demo off, /ch cast on).')
     log('/ch opens the setup panel. /ch unlock to move the frames, /ch help for everything else.')
+end)
+
+ashita.events.register('text_in', 'clickheal_text_in', function(e)
+    if e and e.message then pcall(chatstatus.feed, e.message) end
 end)
 
 ashita.events.register('unload', 'clickheal_unload', function()
@@ -140,12 +146,13 @@ local function draw()
     local disp_w, disp_h = gfx.display_size()
     local source = cfg.demo and demo or game_source
 
+    casting.observe(t, source.castbar and source.castbar() or nil)   -- the game's own cast bar, when it can be read
     local fr = frame.build(cfg, source, t, disp_w, disp_h, state.dismissed)
     gfx.set_font_scale(fr.geom.scale * cfg.font_mult)
 
     local events = {}
     local base = {
-        gfx = gfx, geom = fr.geom, cfg = cfg, pal = fr.pal, roster = fr.roster, player = fr.player,
+        gfx = gfx, geom = fr.geom, cfg = cfg, pal = fr.pal, roster = fr.roster, roster_list = fr.roster_list, group_set = fr.group_set, groups = fr.groups, player = fr.player,
         preset = fr.preset, now = t, events = events, disp_w = disp_w, disp_h = disp_h,
     }
 
@@ -219,7 +226,7 @@ local function draw()
     state.force_pos = false
 
     -- Clicks (Phase 1: these only log and start a demo recast).
-    if #events > 0 then
+    do
         local ctx = {
             demo = cfg.demo and demo or nil, log = log, now = t,
             roster_by_slot = fr.roster, dismissed = state.dismissed,
@@ -231,6 +238,7 @@ local function draw()
             end,
         }
         for _, ev in ipairs(events) do actions.perform(ev, ctx) end
+        actions.run_queued(ctx, fr.player)   -- a click held while casting goes out as soon as you can act
     end
 
     -- Setup panel.

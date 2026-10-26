@@ -297,9 +297,37 @@ function M.status_icon(x, y, size, status_id)
     return true
 end
 
+-- A user-supplied job icon (assets/jobs/<ABBR>.png). False when there is no such file.
+function M.job_icon(x, y, size, abbr)
+    if not draw_list or not image_ok then return false end
+    local tex = icons.job_texture(abbr)
+    if not tex then return false end
+    local ok = pcall(draw_list.AddImage, draw_list, tex, { px(x), px(y) }, { px(x + size), px(y + size) })
+    if not ok then image_ok = false; return false end
+    return true
+end
+
 function M.text(x, y, c, s)
     if not draw_list or s == '' then return end
     draw_list:AddText({ px(x), px(y) }, u32(c), s)
+end
+
+-- Smaller text (k < 1) via the draw list's font-size overload. UNVERIFIED in this ImGui binding: if the call
+-- fails once, scaled text is turned off and the normal size is used (text_size_scaled follows suit).
+local scaled_ok = true
+function M.text_scaled(x, y, c, s, k)
+    if not draw_list or s == '' then return end
+    if math.abs(k - 1) < 0.01 or not scaled_ok then return M.text(x, y, c, s) end
+    local ok = pcall(function()
+        draw_list:AddText(imgui.GetFont(), imgui.GetFontSize() * k, { px(x), px(y) }, u32(c), s)
+    end)
+    if not ok then scaled_ok = false; return M.text(x, y, c, s) end
+end
+
+function M.text_size_scaled(s, k)
+    local w, h = M.text_size(s)
+    if math.abs(k - 1) < 0.01 or not scaled_ok then return w, h end
+    return w * k, h * k
 end
 
 function M.text_size(s)

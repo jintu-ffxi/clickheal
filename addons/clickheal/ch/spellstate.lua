@@ -17,6 +17,7 @@
       'blocked'    - silenced / asleep / etc.     (detail = reason text)
       'recast'     - on cooldown                  (detail = seconds left)
       'nomp'       - not enough MP                (detail = mp still needed)
+      'busy'       - mid-cast or in the delay after an action (detail = seconds left); a click is queued
 ]]--
 
 local spellstate = {}
@@ -29,6 +30,7 @@ function spellstate.evaluate(def, member, player, cfg)
         if player.incapacitated then return 'blocked', 'You cannot act right now' end
         local jleft = player.recast and player.recast[def.key] or 0
         if jleft and jleft > 0.05 then return 'recast', jleft end
+        if (player.busy_left or 0) > 0.05 then return 'busy', player.busy_left end
         return 'ready'
     end
     if def.selfonly then
@@ -38,6 +40,7 @@ function spellstate.evaluate(def, member, player, cfg)
         local sleft = player.recast and player.recast[def.key] or 0
         if sleft and sleft > 0.05 then return 'recast', sleft end
         if def.mp and (player.mp or 0) < def.mp then return 'nomp', def.mp - (player.mp or 0) end
+        if (player.busy_left or 0) > 0.05 then return 'busy', player.busy_left end
         return 'ready'
     end
     if member.zone_diff then return 'zone' end
@@ -62,6 +65,9 @@ function spellstate.evaluate(def, member, player, cfg)
         return 'nomp', def.mp - (player.mp or 0)
     end
 
+    -- Everything else is fine; the player is just still busy with the last action.
+    if (player.busy_left or 0) > 0.05 then return 'busy', player.busy_left end
+
     return 'ready'
 end
 
@@ -75,6 +81,7 @@ function spellstate.describe(state, detail)
     if state == 'range'   then return string.format('Out of range (%dy)', math.floor((detail or 0) + 0.5)) end
     if state == 'blocked' then return tostring(detail or 'Blocked') end
     if state == 'recast'  then return string.format('Recast %.1fs', detail or 0) end
+    if state == 'busy'    then return string.format('Casting, %.1fs (click to queue)', detail or 0) end
     if state == 'nomp'    then return string.format('Need %d more MP', math.ceil(detail or 0)) end
     return state
 end

@@ -17,19 +17,28 @@ local HELP = {
     '/ch show | hide          show or hide the frames',
     '/ch lock | unlock        lock = clickable, unlock = drag to move',
     '/ch scale <0.5-4|auto>   size multiplier (auto = follow game resolution)',
-    '/ch layout <full|compact|minimal|grid|strip>',
     '/ch mode <party|alliance1|alliance2>   (or 6 / 12 / 18)',
     '/ch orient <columns|stacked|rows>',
     '/ch demo [on|off]        demo data (off = your real party)',
     '/ch slant <0-16>         strip rows: 0 = square (default), higher = leaning edge',
     '/ch buttons <24-64> [2-16]  flyout button size (and spacing)',
+    '/ch status               show the switches that decide what hover and clicks do',
     '/ch cast [on|off]        a click really casts the spell (off = only logs). Needs demo off.',
+    '/ch queue [on|off]       hold a click made mid-cast and send it when you can act',
+    '/ch fastcast <0-80>      Fast Cast %, shortens the estimated cast time',
+    '/ch lockout <0.3-3>      seconds of delay after each cast or ability',
     '/ch alerts [on|off]      priority alert bar',
-    '/ch colors <modern|mono|colorblind>',
-    '/ch buffs [on|off]       buff pip strip on full cards',
-    '/ch mybuffs [on|off]     pips: only buffs your job can cast',
-    '/ch timers [on|off]      seconds left on debuff chips and buff pips',
-    '/ch job <text|tag>       job shown as text (WHM/SCH 99) or as a tag chip',
+    '/ch colors <modern|job|mono|colorblind>',
+    '/ch skin <solid|hairline>  row style',
+    '/ch triage [on|off]      neediest-first panel with best-fit cures',
+    '/ch mp pct [on|off]      MP percent beside the HP percent',
+    '/ch mp height <2-14>     MP bar thickness',
+    '/ch mp size <0.5-1>      MP percent text size',
+    '/ch jobicons [on|off]    job pictograms instead of the three letters',
+    '/ch rowsize <w> <h>      member row width and height (160-360, 30-72)',
+    '/ch icons <debuff> [buff]  status icon sizes (10-32)',
+    '/ch buffbar [on|off]     buff icon bar on each row',
+    '/ch mybuffs [on|off]     buff bar: only buffs your job can cast',
     '/ch buffmode [heal|buff] spell row shows heals or buffs (no argument = switch)',
     '/ch flyout [on|off]      hover a member (Grid / Strip) to open their spell flyout',
     '/ch order <heal|cleanse|buff|raise|ability> <spell keys...>   spell order, same for every member;  /ch order <group> reset',
@@ -70,6 +79,21 @@ function commands.run(args, s)
     if cmd == nil or cmd == 'config' or cmd == 'setup' then
         out.toggle_config = true
 
+    elseif cmd == 'status' then
+        local function yn(v) return v and 'on' or 'off' end
+        say(string.format('shown: %s   locked: %s   hover flyout: %s   demo data: %s   casting: %s',
+            yn(s.visible), yn(s.locked), yn(s.flyout), yn(s.demo), yn(s.cast)))
+        say(string.format('shared spell bar: %s   plain-click casting: %s   buff clicks: %s   click queue: %s',
+            yn(s.spellbar), yn(s.cell_binds), yn(s.buff_mode), yn(s.queue_clicks)))
+        local cs = require('ch.chatstatus')
+        say('chat-tracked members: ' .. cs.count() .. '   chat lines seen: ' .. cs.seen)
+        if cs.last_raw then
+            say('last "effect" line, raw bytes: ' .. cs.last_raw:gsub('[^\32-\126]', function(c) return '<' .. c:byte() .. '>' end))
+        end
+        if not s.locked then say('The hover flyout only works while LOCKED. /ch lock') end
+        if not s.flyout then say('Hover flyout is off. /ch flyout on') end
+        if not s.visible then say('Frames are hidden. /ch show') end
+
     elseif cmd == 'help' or cmd == '?' then
         for _, l in ipairs(HELP) do say(l) end
 
@@ -95,14 +119,6 @@ function commands.run(args, s)
                 s.scale = n; out.changed = true
                 say(string.format('Scale multiplier: %.2f (%s)', n, s.auto_scale and 'on top of auto scale' or 'absolute'))
             end
-        end
-
-    elseif cmd == 'layout' or cmd == 'style' then
-        local v = lower(a3)
-        if v and in_list(chconfig.enums.style, v) then
-            s.style = v; out.changed = true; say('Layout: ' .. v)
-        else
-            say('Usage: /ch layout <full|compact|minimal|grid|strip>')
         end
 
     elseif cmd == 'mode' then
@@ -146,6 +162,81 @@ function commands.run(args, s)
             say('Flyout buttons: size ' .. s.fly_btn .. ', spacing ' .. s.fly_gap)
         end
 
+    elseif cmd == 'rowsize' then
+        local w, h = tonumber(a3), tonumber(args[4])
+        if not w or not h then
+            say('Usage: /ch rowsize <width 160-360> <height 30-72>   (now ' .. s.row_w .. ' x ' .. s.row_h .. ')')
+        else
+            s.row_w, s.row_h = w, h
+            chconfig.sanitize(s); out.changed = true
+            say('Row size: ' .. s.row_w .. ' x ' .. s.row_h)
+        end
+
+    elseif cmd == 'skin' then
+        local v = (a3 or ''):lower()
+        if v == 'solid' or v == 'hairline' then
+            s.skin = v; out.changed = true
+            say('Row style: ' .. v)
+        else
+            say('Usage: /ch skin <solid|hairline>   (now ' .. s.skin .. ')')
+        end
+
+    elseif cmd == 'triage' then
+        s.triage = onoff(a3, s.triage); out.changed = true
+        say('Triage view: ' .. (s.triage and 'on' or 'off'))
+
+    elseif cmd == 'mp' then
+        local sub = (a3 or ''):lower()
+        if sub == 'pct' then
+            s.show_mp_pct = onoff(args[4] and args[4]:lower(), s.show_mp_pct); out.changed = true
+            say('MP percent: ' .. (s.show_mp_pct and 'on' or 'off'))
+        elseif sub == 'size' and tonumber(args[4]) then
+            s.mp_pct_scale = tonumber(args[4]); chconfig.sanitize(s); out.changed = true
+            say(string.format('MP percent size: %.2f', s.mp_pct_scale))
+        elseif sub == 'height' and tonumber(args[4]) then
+            s.mp_height = tonumber(args[4]); chconfig.sanitize(s); out.changed = true
+            say('MP bar thickness: ' .. s.mp_height)
+        else
+            say('Usage: /ch mp pct [on|off]   or   /ch mp height <2-14>   (now ' .. (s.show_mp_pct and 'pct on' or 'pct off') .. ', height ' .. s.mp_height .. ')')
+        end
+
+    elseif cmd == 'icons' then
+        local d, b = tonumber(a3), tonumber(args[4])
+        if not d then
+            say('Usage: /ch icons <debuff 10-32> [buff 10-32]   (now ' .. s.debuff_icon .. ' / ' .. s.buff_icon .. ')')
+        else
+            s.debuff_icon = d
+            if b then s.buff_icon = b end
+            chconfig.sanitize(s); out.changed = true
+            say('Icon sizes: debuff ' .. s.debuff_icon .. ', buff ' .. s.buff_icon)
+        end
+
+    elseif cmd == 'jobicons' then
+        s.job_icon = onoff(a3, s.job_icon); out.changed = true
+        say('Job icons: ' .. (s.job_icon and 'on' or 'off'))
+
+    elseif cmd == 'queue' then
+        s.queue_clicks = onoff(a3, s.queue_clicks); out.changed = true
+        say('Click queue: ' .. (s.queue_clicks and 'on' or 'off'))
+
+    elseif cmd == 'fastcast' then
+        local n = tonumber(a3)
+        if not n then
+            say('Usage: /ch fastcast <0-80>   (now ' .. s.fast_cast .. '%)')
+        else
+            s.fast_cast = n; chconfig.sanitize(s); out.changed = true
+            say('Fast Cast: ' .. s.fast_cast .. '%')
+        end
+
+    elseif cmd == 'lockout' then
+        local n = tonumber(a3)
+        if not n then
+            say(string.format('Usage: /ch lockout <0.3-3>   (now %.1fs)', s.cast_lockout))
+        else
+            s.cast_lockout = n; chconfig.sanitize(s); out.changed = true
+            say(string.format('Delay after each action: %.1fs', s.cast_lockout))
+        end
+
     elseif cmd == 'cast' then
         s.cast = onoff(a3, s.cast); out.changed = true
         if s.cast and s.demo then
@@ -165,25 +256,15 @@ function commands.run(args, s)
         if v and in_list(chconfig.enums.colors, v) then
             s.colors = v; out.changed = true; say('Colors: ' .. v)
         else
-            say('Usage: /ch colors <modern|mono|colorblind>')
+            say('Usage: /ch colors <modern|job|mono|colorblind>')
         end
 
-    elseif cmd == 'buffs' then
-        s.show_buffs = onoff(a3, s.show_buffs); out.changed = true
-        say('Buff pips: ' .. (s.show_buffs and 'on' or 'off'))
+    elseif cmd == 'buffbar' then
+        s.show_buff_bar = onoff(a3, s.show_buff_bar); out.changed = true
+        say('Buff icon bar: ' .. (s.show_buff_bar and 'on' or 'off'))
     elseif cmd == 'mybuffs' then
         s.buffs_mine_only = onoff(a3, s.buffs_mine_only); out.changed = true
-        say('Pips show: ' .. (s.buffs_mine_only and 'only buffs your job casts' or 'all known buffs'))
-    elseif cmd == 'timers' then
-        s.show_timers = onoff(a3, s.show_timers); out.changed = true
-        say('Timers: ' .. (s.show_timers and 'on' or 'off'))
-    elseif cmd == 'job' then
-        local v = lower(a3)
-        if v and in_list(chconfig.enums.job_style, v) then
-            s.job_style = v; out.changed = true; say('Job display: ' .. v)
-        else
-            say('Usage: /ch job <text|tag>')
-        end
+        say('Buff bar shows: ' .. (s.buffs_mine_only and 'only buffs your job casts' or 'all known buffs'))
     elseif cmd == 'buffmode' then
         local v = lower(a3)
         if v == 'buff' or v == 'buffs' then s.buff_mode = true

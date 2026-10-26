@@ -22,7 +22,7 @@ local IMGUI_FUNCS = {
     'Checkbox', 'SliderFloat', 'SliderInt', 'Button', 'SameLine', 'Separator', 'Spacing',
     'TextColored', 'TextWrapped', 'InvisibleButton', 'BeginChild', 'EndChild', 'PushStyleColor',
     'PopStyleColor', 'SetNextItemWidth', 'GetContentRegionAvail', 'CollapsingHeader', 'SmallButton',
-    'IsItemHovered', 'SetTooltip', 'SetCursorScreenPos', 'IsItemActive', 'IsMouseDown',
+    'IsItemHovered', 'SetTooltip', 'SetNextWindowSizeConstraints', 'SetCursorScreenPos', 'IsItemActive', 'IsMouseDown',
 }
 
 local GLOBALS = {
@@ -111,6 +111,15 @@ function M.run(imgui, emit)
         end
     else
         add('imgui.GetBackgroundDrawList: not available; cannot probe quad drawing (rows fall back to square if AddQuadFilled is missing)')
+    end
+
+    add('next: cast bar (AshitaCore:GetMemoryManager():GetCastBar())')
+    local okcb, cb = pcall(function() return AshitaCore:GetMemoryManager():GetCastBar() end)
+    if okcb and cb then
+        local okp, pc = pcall(function() return cb:GetPercent() end)
+        add('cast bar GetPercent(): ' .. (okp and describe(pc) or 'FAILED (cast timing falls back to estimates)'))
+    else
+        add('cast bar: NOT AVAILABLE (cast timing falls back to estimates)')
     end
 
     add(string.format('bit library: %s', (bit and bit.bor) and 'present' or 'MISSING'))

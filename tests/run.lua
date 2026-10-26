@@ -42,8 +42,8 @@ local function truthy(v, msg) if not v then error(msg or 'expected truthy', 2) e
 local function new_cfg(over)
     local c = chconfig.sanitize({})
     c.alerts.enabled = true        -- the alert window is off by default; the alert tests need it on
-    c.style = 'full'               -- default layout is Strip; older tests were written against Full
     ui.reset_state()
+    require('ch.casting').reset()     -- no busy state left over from an earlier test
     for k, v in pairs(over or {}) do c[k] = v end
     return chconfig.sanitize(c)
 end
@@ -101,76 +101,6 @@ test('layout: scale follows window height', function()
     near(layout.scale({ auto_scale = true, scale = 1.5 }, 1440), 1.5 * 1440 / 1080, 1e-9)
     near(layout.scale({ auto_scale = false, scale = 1.25 }, 2160), 1.25, 1e-9, 'auto off = absolute')
     near(layout.scale({ auto_scale = true, scale = 1.0 }, nil), 1.0, 1e-9, 'unknown height falls back to 1080')
-end)
-
-test('layout: footprint is resolution independent (4K matches 1080p)', function()
-    for _, style in ipairs({ 'full', 'compact', 'minimal' }) do
-        for _, mode in ipairs({ 'party', 'alliance1', 'alliance2' }) do
-            local groups = layout.groups_for(mode, false)
-            local o = { style = style, orientation = 'columns', auto_scale = true, scale = 1.0, groups = groups }
-            local a = layout.compute(o, 1080)
-            local b = layout.compute(o, 2160)
-            near(b.width, a.width * 2, 4, style .. '/' .. mode .. ' width')
-            near(b.height, a.height * 2, 6, style .. '/' .. mode .. ' height')
-            local aw, ah = layout.footprint(a, 1920, 1080)
-            local bw, bh = layout.footprint(b, 3840, 2160)
-            near(aw, bw, 0.005); near(ah, bh, 0.005)
-        end
-    end
-end)
-
-test('layout: documented 1080p footprints', function()
-    local g = layout.compute({ style = 'full', orientation = 'columns', groups = { 0 } }, 1080)
-    eq(g.width, 290); eq(g.height, 474)
-    local gnb = layout.compute({ style = 'full', orientation = 'columns', groups = { 0 }, show_buffs = false }, 1080)
-    eq(gnb.height, 408, 'buff strip off keeps the old height')
-    local g3 = layout.compute({ style = 'full', orientation = 'columns', groups = { 0, 1, 2 } }, 1080)
-    eq(g3.width, 886)
-    local c = layout.compute({ style = 'compact', orientation = 'columns', groups = { 0 } }, 1080)
-    eq(c.width, 320)
-    local m = layout.compute({ style = 'minimal', orientation = 'columns', groups = { 0 } }, 1080)
-    eq(m.width, 210)
-end)
-
-test('layout: no card overlaps another, all inside the panel', function()
-    for _, style in ipairs({ 'full', 'compact', 'minimal' }) do
-        for _, orient in ipairs({ 'columns', 'stacked', 'rows' }) do
-            for _, h in ipairs({ 720, 1080, 1440, 2160 }) do
-                local g = layout.compute({ style = style, orientation = orient, auto_scale = true, scale = 1.0, groups = { 0, 1, 2 } }, h)
-                local list = {}
-                for slot, c in pairs(g.cards) do
-                    truthy(c.x >= 0 and c.y >= g.header_h, 'card above/left of panel: ' .. style .. orient)
-                    truthy(c.x + c.w <= g.width and c.y + c.h <= g.height, 'card outside panel: ' .. style .. orient .. h .. ' slot ' .. slot)
-                    list[#list + 1] = c
-                end
-                eq(#list, 18)
-                for i = 1, #list do
-                    for j = i + 1, #list do
-                        local a, b = list[i], list[j]
-                        local overlap = a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h
-                        if overlap then error(string.format('cards overlap in %s/%s/%d', style, orient, h)) end
-                    end
-                end
-            end
-        end
-    end
-end)
-
-test('layout: spell buttons never smaller than 24 base px', function()
-    for _, style in ipairs({ 'full', 'compact', 'minimal' }) do
-        local g = layout.compute({ style = style, groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
-        truthy(g.btn >= 24, style .. ' button ' .. g.btn)
-        local g4 = layout.compute({ style = style, groups = { 0 }, auto_scale = true, scale = 1.0 }, 2160)
-        truthy(g4.btn >= 48, style .. ' 4K button ' .. g4.btn)
-    end
-end)
-
-test('layout: button counts fit their rows', function()
-    local f = layout.compute({ style = 'full', groups = { 0 } }, 1080)
-    eq(f.max_buttons, 9)
-    local c = layout.compute({ style = 'compact', groups = { 0 } }, 1080)
-    eq(c.max_buttons, 4)
-    truthy(f.buttons_w <= f.card_w - 2 * f.pad, 'full button row wider than card')
 end)
 
 test('layout: groups_for hides empty alliances only when asked', function()
@@ -407,37 +337,6 @@ test('actions: ready click logs and starts a demo recast; blocked click does nei
     eq(actions.perform({ type = 'cast', slot = 1, spell = 'nonexistent' }, ctx), 'ignored')
 end)
 
-test('actions: end-to-end right click / shift click cast the tier the user asked for', function()
-    -- Click through the real UI, hand the resulting event to actions, and check the logged spell.
-    -- (Guards against resolving the click binding twice, which would turn a right click on
-    --  Cure IV into Cure II.)
-    local cfg = new_cfg({ style = 'full', mode = 'party' })
-    local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f0)
-    local hb
-    for _, h in ipairs(f0.hitboxes) do
-        if h.kind == 'spell' and h.slot == 1 and h.key == 'cure4' then hb = h end
-    end
-    truthy(hb, 'cure4 button not found')
-    local cx, cy = hb.x + hb.w / 2, hb.y + hb.h / 2
-
-    local function logged(btn, mods)
-        local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(cx, cy, btn, mods))
-        ui.draw_roster(f)
-        eq(#f.events, 1)
-        local logs = {}
-        demo.reset()
-        local ctx = { demo = demo, log = function(t) logs[#logs + 1] = t end, now = 3.0,
-                      roster_by_slot = f.roster, dismissed = {} }
-        actions.perform(f.events[1], ctx)
-        return logs[1] or ''
-    end
-
-    truthy(logged('left'):find('Cure IV ->', 1, true), 'left click should cast Cure IV')
-    truthy(logged('right'):find('Cure III ->', 1, true), 'right click should cast Cure III')
-    truthy(logged('left', { shift = true }):find('Cure V ->', 1, true), 'shift click should cast Cure V')
-end)
-
 test('actions: module contains no game-command code (Phase 1 safety)', function()
     local f = io.open('addons/clickheal/ch/actions.lua', 'r')
     local src = f:read('*a'); f:close()
@@ -454,8 +353,6 @@ test('commands: parsing', function()
     commands.run({ '/ch', 'scale', '1.5' }, s); eq(s.scale, 1.5)
     local bad = commands.run({ '/ch', 'scale', '99' }, s); eq(s.scale, 1.5); truthy(bad.messages[1]:find('Usage'))
     commands.run({ '/ch', 'scale', 'auto' }, s); eq(s.scale, 1.0); eq(s.auto_scale, true)
-    commands.run({ '/ch', 'layout', 'COMPACT' }, s); eq(s.style, 'compact')
-    commands.run({ '/ch', 'layout', 'weird' }, s); eq(s.style, 'compact')
     commands.run({ '/ch', 'mode', '12' }, s); eq(s.mode, 'alliance1')
     commands.run({ '/ch', 'mode', '18' }, s); eq(s.mode, 'alliance2')
     commands.run({ '/ch', 'mode', 'party' }, s); eq(s.mode, 'party')
@@ -479,19 +376,19 @@ test('commands: reset requires confirmation', function()
 end)
 
 test('chconfig: sanitize repairs garbage and keeps good values', function()
-    local s = chconfig.sanitize({ style = 'bogus', scale = 'x', opacity = 5, max_range = -3, pos = 'nope',
+    local s = chconfig.sanitize({ scale = 'x', opacity = 5, max_range = -3, pos = 'nope',
         alerts = { max = 99, muted = 'x' }, hp_crit = 0 / 0, mode = 'alliance1' })
-    eq(s.style, 'strip'); eq(s.scale, 1.0); eq(s.opacity, 1.0)
+    eq(s.scale, 1.0); eq(s.opacity, 1.0)
     eq(s.max_range, 5); eq(s.pos.x, 40); eq(s.alerts.max, 8); eq(type(s.alerts.muted), 'table')
     eq(s.hp_crit, chconfig.defaults.hp_crit); eq(s.mode, 'alliance1')
     truthy(s.warn_range <= s.max_range)
 end)
 
 test('chconfig: reset keeps the same table', function()
-    local s = new_cfg({ scale = 3, style = 'minimal' })
+    local s = new_cfg({ scale = 3 })
     local ref = s
     chconfig.reset(s)
-    eq(ref, s); eq(s.scale, 1.0); eq(s.style, 'strip')
+    eq(ref, s); eq(s.scale, 1.0)
 end)
 
 -- =============================================================================================
@@ -521,7 +418,7 @@ end)
 -- ui (through the recording backend)
 -- =============================================================================================
 test('ui: draws every style x mode x orientation x resolution without error, inside the panel', function()
-    for _, style in ipairs({ 'full', 'compact', 'minimal' }) do
+    for _, style in ipairs({ 'strip' }) do
         for _, mode in ipairs({ 'party', 'alliance1', 'alliance2' }) do
             for _, orient in ipairs({ 'columns', 'stacked', 'rows' }) do
                 for _, h in ipairs({ 720, 1080, 1440, 2160 }) do
@@ -550,7 +447,7 @@ test('ui: draws every style x mode x orientation x resolution without error, ins
 end)
 
 test('ui: text inside a card never runs past the card edge', function()
-    for _, style in ipairs({ 'full', 'compact', 'minimal' }) do
+    for _, style in ipairs({ 'strip' }) do
         local cfg = new_cfg({ style = style, mode = 'alliance2', demo_alliance_debuffs = true })
         local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
         ui.draw_roster(f)
@@ -571,7 +468,7 @@ end)
 
 test('ui: header title and status tag never overlap (narrowest panel, long tag)', function()
     for _, locked in ipairs({ true, false }) do
-        for _, style in ipairs({ 'full', 'compact', 'minimal' }) do
+        for _, style in ipairs({ 'strip' }) do
             local cfg = new_cfg({ style = style, mode = 'party', locked = locked })
             local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
             ui.draw_roster(f)
@@ -590,100 +487,9 @@ test('ui: header title and status tag never overlap (narrowest panel, long tag)'
     end
 end)
 
-test('ui: every spell hitbox is at least 24 px at 1080p and scales at 4K', function()
-    for _, h in ipairs({ 1080, 2160 }) do
-        local cfg = new_cfg({ style = 'full', mode = 'alliance1' })
-        local f, fr = build_ui_frame(cfg, h, 3.0, nil, true)
-        ui.draw_roster(f)
-        local n = 0
-        for _, hb in ipairs(f.hitboxes) do
-            if hb.kind == 'spell' then
-                n = n + 1
-                truthy(hb.w >= 24 * fr.geom.scale - 1 and hb.h >= 24 * fr.geom.scale - 1, 'button too small: ' .. hb.w .. 'x' .. hb.h)
-            end
-        end
-        truthy(n > 40, 'expected many buttons, got ' .. n)
-    end
-end)
-
 local function find_hitbox(hitboxes, pred)
     for _, hb in ipairs(hitboxes) do if pred(hb) then return hb end end
 end
-
-test('ui: clicking a button emits a cast with the resolved binding', function()
-    local cfg = new_cfg({ style = 'full', mode = 'party' })
-    local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f0)
-    -- Brannoch (slot 1), in range, plain row: first button is Cure IV
-    local hb = find_hitbox(f0.hitboxes, function(h) return h.kind == 'spell' and h.slot == 1 and h.key == 'cure4' end)
-    truthy(hb, 'cure4 button for slot 1 not found')
-    local cx, cy = hb.x + hb.w / 2, hb.y + hb.h / 2
-
-    local function click(btn, mods)
-        local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(cx, cy, btn, mods))
-        ui.draw_roster(f)
-        return f.events
-    end
-
-    local ev = click('left')
-    eq(#ev, 1); eq(ev[1].type, 'cast'); eq(ev[1].spell, 'cure4'); eq(ev[1].slot, 1); eq(ev[1].state, 'ready')
-    ev = click('right');                eq(ev[1].spell, 'cure3', 'right click = one tier down')
-    ev = click('left', { shift = true }); eq(ev[1].spell, 'cure5', 'shift = one tier up')
-
-    -- Hover without a click emits nothing and produces a tooltip.
-    local fh = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(cx, cy, nil))
-    ui.draw_roster(fh)
-    eq(#fh.events, 0)
-    local has_tip = false
-    for _, c in ipairs(fh.gfx.cmds) do if c.op == 'tooltip' then has_tip = true end end
-    truthy(has_tip, 'tooltip expected on hover')
-end)
-
-test('ui: unlocked panel is not clickable; mouse elsewhere is ignored', function()
-    local cfg = new_cfg({ style = 'full', mode = 'party', locked = false })
-    local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f0)
-    local hb = find_hitbox(f0.hitboxes, function(h) return h.kind == 'spell' and h.slot == 1 end)
-    local cx, cy = hb.x + hb.w / 2, hb.y + hb.h / 2
-    local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(cx, cy, 'left', {}, false))
-    ui.draw_roster(f)
-    eq(#f.events, 0, 'unlocked must not cast')
-
-    local cfg2 = new_cfg({ style = 'full', mode = 'party' })
-    local f2 = build_ui_frame(cfg2, 1080, 3.0, gfx_rec.input(5000, 5000, 'left'))
-    ui.draw_roster(f2)
-    eq(#f2.events, 0)
-end)
-
-test('ui: out-of-range button click is reported as range, not ready', function()
-    local cfg = new_cfg({ style = 'full', mode = 'party' })
-    local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f0)
-    local hb = find_hitbox(f0.hitboxes, function(h) return h.kind == 'spell' and h.slot == 5 end)  -- Dunstan, 24y
-    local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(hb.x + 2, hb.y + 2, 'left'))
-    ui.draw_roster(f)
-    eq(#f.events, 1); eq(f.events[1].state, 'range')
-end)
-
-test('ui: minimal style reveals buttons on hover only', function()
-    local cfg = new_cfg({ style = 'minimal', mode = 'party' })
-    local f0, fr = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f0)
-    local n0 = 0
-    for _, h in ipairs(f0.hitboxes) do if h.kind == 'spell' then n0 = n0 + 1 end end
-    eq(n0, 0, 'no spell buttons without hover')
-    local card = fr.geom.cards[1]
-    local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(card.x + 20, card.y + card.h / 2, nil), true)
-    ui.draw_roster(f)
-    local nb = 0
-    for _, hb in ipairs(f.hitboxes) do if hb.kind == 'spell' then nb = nb + 1 end end
-    truthy(nb > 0, 'buttons should appear on hover')
-    for _, hb in ipairs(f.hitboxes) do
-      if hb.kind == 'spell' then
-        truthy(hb.x >= card.x and hb.x + hb.w <= card.x + card.w and hb.y >= card.y and hb.y + hb.h <= card.y + card.h, 'hover buttons must stay inside the card')
-      end
-    end
-end)
 
 test('ui: alert bar rows are clickable; right click dismisses', function()
     local cfg = new_cfg({ style = 'full', mode = 'party' })
@@ -773,54 +579,8 @@ test('buffs: "mine only" keeps what the job can cast; no buff data shows nothing
     eq(buffs.recast_spell('haste', spells.presets.SCH), nil)
 end)
 
-test('ui: buff pips are drawn inside the card and clicking one recasts that buff', function()
-    local cfg = new_cfg({ style = 'full', mode = 'party' })
-    local f0, fr = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f0)
-    local pips = 0
-    for _, hb in ipairs(f0.hitboxes) do
-        if hb.kind == 'buff' then
-            pips = pips + 1
-            local c = fr.geom.cards[hb.slot]
-            truthy(hb.x >= c.x and hb.x + hb.w <= c.x + c.w and hb.y >= c.y + fr.geom.buff_y and hb.y + hb.h <= c.y + fr.geom.btn_y,
-                'pip must sit in the strip between the bars and the tiles')
-        end
-    end
-    truthy(pips >= 10, 'demo party should show pips, got ' .. pips)
-    local hb = find_hitbox(f0.hitboxes, function(h) return h.kind == 'buff' and h.slot == 1 and h.key == 'haste' end)
-    truthy(hb, 'Brannoch haste pip')
-    local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(hb.x + 2, hb.y + 2, 'left'))
-    ui.draw_roster(f)
-    eq(#f.events, 1); eq(f.events[1].spell, 'haste'); eq(f.events[1].slot, 1); eq(f.events[1].via, 'buff')
-    -- right click does nothing on a pip
-    local f2 = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(hb.x + 2, hb.y + 2, 'right'))
-    ui.draw_roster(f2)
-    eq(#f2.events, 0)
-end)
-
-test('ui: show_buffs=false removes the strip and the full card shrinks back', function()
-    local cfg = new_cfg({ style = 'full', mode = 'party', show_buffs = false })
-    local f, fr = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f)
-    eq(fr.geom.buff_h, 0); eq(fr.geom.height, 408)
-    for _, hb in ipairs(f.hitboxes) do truthy(hb.kind ~= 'buff', 'no pips when off') end
-end)
-
-test('ui: buff mode swaps the spell row and keeps priority cures out of it', function()
-    local cfg = new_cfg({ style = 'full', mode = 'party', buff_mode = true })
-    local f, fr = build_ui_frame(cfg, 1080, 3.0, nil, true)
-    ui.draw_roster(f)
-    local keys = {}
-    for _, hb in ipairs(f.hitboxes) do
-        if hb.kind == 'spell' and hb.slot == 5 then keys[#keys + 1] = hb.key end   -- Dunstan: poisoned
-    end
-    truthy(#keys > 0)
-    eq(keys[1], 'haste')
-    for _, k in ipairs(keys) do truthy(k ~= 'poisona', 'no cleanse in buff mode') end
-end)
-
 test('ui: header mode switch emits a toggle event and actions flips the setting', function()
-    local cfg = new_cfg({ style = 'full', mode = 'party' })
+    local cfg = new_cfg({ mode = 'party', flyout = false })
     local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
     ui.draw_roster(f0)
     local hb = find_hitbox(f0.hitboxes, function(h) return h.kind == 'mode' end)
@@ -834,7 +594,7 @@ test('ui: header mode switch emits a toggle event and actions flips the setting'
 end)
 
 test('ui: debuff chips are short tags with no countdown; the hover list has the times', function()
-    for _, style in ipairs({ 'full', 'grid', 'strip' }) do
+    for _, style in ipairs({ 'strip' }) do
         local cfg = new_cfg({ style = style, mode = 'party', show_timers = true })
         local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
         ui.draw_roster(f)
@@ -847,34 +607,6 @@ test('ui: debuff chips are short tags with no countdown; the hover list has the 
         end
         truthy(tags >= 3, 'the tags are there')
     end
-end)
-
-test('ui: job tag style draws a chip and the sub job, in every layout, without leaving the card', function()
-    for _, style in ipairs({ 'full', 'compact', 'minimal' }) do
-        local cfg = new_cfg({ style = style, mode = 'party', job_style = 'tag' })
-        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
-        ui.draw_roster(f)
-        local saw_tag = false
-        for _, c in ipairs(g.cmds) do if c.op == 'text' and c.s == 'WHM' then saw_tag = true end end
-        truthy(saw_tag, 'WHM tag drawn in ' .. style)
-    end
-end)
-
-test('commands: buffs, timers, job, buffmode', function()
-    local s = new_cfg({})
-    local r = commands.run({ '/ch', 'buffs', 'off' }, s); eq(s.show_buffs, false); truthy(r.changed)
-    commands.run({ '/ch', 'mybuffs', 'off' }, s); eq(s.buffs_mine_only, false)
-    commands.run({ '/ch', 'timers', 'off' }, s); eq(s.show_timers, false)
-    commands.run({ '/ch', 'job', 'tag' }, s); eq(s.job_style, 'tag')
-    commands.run({ '/ch', 'job', 'nope' }, s); eq(s.job_style, 'tag', 'bad value ignored')
-    commands.run({ '/ch', 'buffmode', 'buff' }, s); eq(s.buff_mode, true)
-    commands.run({ '/ch', 'buffmode', 'heal' }, s); eq(s.buff_mode, false)
-    commands.run({ '/ch', 'buffmode' }, s); eq(s.buff_mode, true, 'no arg toggles')
-end)
-
-test('chconfig: new settings are repaired from bad values', function()
-    local s = chconfig.sanitize({ job_style = 'weird', show_buffs = 'yes', buff_mode = 3 })
-    eq(s.job_style, 'text'); eq(s.show_buffs, true); eq(s.buff_mode, true)
 end)
 
 -- =============================================================================================
@@ -926,18 +658,6 @@ test('bindings: resolve handles cleanse, KO and none', function()
     eq(bindings.resolve('cure4', { name = 'A' }, whm, 'left'), 'cure4')
 end)
 
-test('layout: grid and strip are much smaller than full', function()
-    local full = layout.compute({ style = 'full', orientation = 'columns', groups = { 0, 1, 2 } }, 1080)
-    for _, style in ipairs({ 'grid', 'strip' }) do
-        local g = layout.compute({ style = style, orientation = 'columns', groups = { 0, 1, 2 } }, 1080)
-        truthy(g.width < full.width and g.height < full.height * 0.7, style .. ' footprint')
-        local g4 = layout.compute({ style = style, orientation = 'columns', groups = { 0, 1, 2 } }, 2160)
-        near(g4.width / 3840, g.width / 1920, 0.005)
-    end
-    local g = layout.compute({ style = 'grid', orientation = 'columns', groups = { 0, 1, 2 } }, 1080)
-    eq(g.width, 3 * 140 + 2 * 8)
-end)
-
 local function cell_click(cfg, slot, button, mods, groups_mode)
     cfg.mode = groups_mode or cfg.mode
     local f0, fr = build_ui_frame(cfg, 1080, 3.0, nil, true)
@@ -950,7 +670,7 @@ local function cell_click(cfg, slot, button, mods, groups_mode)
 end
 
 test('ui: grid click casting follows the bindings (button, modifier, cleanse, KO)', function()
-    for _, style in ipairs({ 'grid', 'strip' }) do
+    for _, style in ipairs({ 'strip' }) do
         local cfg = new_cfg({ style = style, mode = 'alliance1', cell_binds = true })
         local function spell_of(slot, button, mods)
             local ev = cell_click(cfg, slot, button, mods)
@@ -981,7 +701,7 @@ test('ui: grid hover shows the bindings tooltip; no hover = nothing', function()
 end)
 
 test('ui: grid and strip text stays inside its cell at 1080p and 4K', function()
-    for _, style in ipairs({ 'grid', 'strip' }) do
+    for _, style in ipairs({ 'strip' }) do
         for _, h in ipairs({ 1080, 2160 }) do
             local cfg = new_cfg({ style = style, mode = 'alliance2', demo_alliance_debuffs = true })
             local f, fr, g = build_ui_frame(cfg, h, 3.0)
@@ -1008,8 +728,6 @@ test('commands: bind, unbind via none, reset, binds', function()
     commands.run({ '/ch', 'bind', 'xyz', 'cure1' }, s); eq(s.bindings.xyz, nil)
     eq(commands.run({ '/ch', 'binds' }, s).show_binds, true)
     commands.run({ '/ch', 'bind', 'reset' }, s); eq(next(s.bindings), nil)
-    commands.run({ '/ch', 'layout', 'grid' }, s); eq(s.style, 'grid')
-    commands.run({ '/ch', 'layout', 'strip' }, s); eq(s.style, 'strip')
 end)
 
 test('actions: a note event is logged', function()
@@ -1037,7 +755,7 @@ test('ui: many debuffs - severe first, short names when timers do not fit, +N, a
     ui.draw_roster(f)
     local texts = {}
     for _, cmd in ipairs(g.cmds) do
-        if cmd.op == 'text' and cmd.x >= c.x and cmd.x <= c.x + c.w and cmd.y >= c.y and cmd.y <= c.y + c.h * 0.5 then
+        if cmd.op == 'text' and cmd.x >= c.x and cmd.x <= c.x + c.w and cmd.y >= c.y + c.h * 0.4 and cmd.y <= c.y + c.h then
             texts[#texts + 1] = cmd
         end
     end
@@ -1050,8 +768,8 @@ test('ui: many debuffs - severe first, short names when timers do not fit, +N, a
     truthy(saw_more, 'the rest collapse into +N')
 
     -- hovering over the chips lists all seven
-    local hx = c.x + c.w - fr.geom.pad - 6
-    local hy = c.y + math.floor(4 * fr.geom.scale) + 6
+    local hx = c.x + math.floor(48 * fr.geom.scale)
+    local hy = c.y + c.h - math.floor(14 * fr.geom.scale)
     local g2 = gfx_rec.new(fr.geom.scale)
     local f2 = { gfx = g2, geom = fr.geom, cfg = cfg, pal = fr.pal, roster = fr.roster, player = fr.player,
         preset = fr.preset, now = 3.0, ox = 0, oy = 0, events = {}, input = gfx_rec.input(hx, hy, nil) }
@@ -1072,7 +790,7 @@ end
 local function hb_of(f, pred) return find_hitbox(f.hitboxes, pred) end
 
 test('layout: spell bar sits below the cells inside the panel, and scales with resolution', function()
-    for _, style in ipairs({ 'grid', 'strip' }) do
+    for _, style in ipairs({ 'strip' }) do
         local g = layout.compute({ style = style, orientation = 'columns', groups = { 0 }, spellbar = true }, 1080)
         truthy(g.bar, 'bar present')
         truthy(g.bar.y >= g.header_h + 6 * g.card_h, 'below the cells')
@@ -1082,7 +800,6 @@ test('layout: spell bar sits below the cells inside the panel, and scales with r
         near(g4.width / 3840, g.width / 1920, 0.005); near(g4.height / 2160, g.height / 1080, 0.005)
         eq(layout.compute({ style = style, orientation = 'columns', groups = { 0 }, spellbar = false }, 1080).bar, nil)
     end
-    eq(layout.compute({ style = 'full', orientation = 'columns', groups = { 0 }, spellbar = true }, 1080).bar, nil, 'full has its own tiles')
 end)
 
 test('spells: bar tabs only name real spells; empty tabs are hidden', function()
@@ -1099,7 +816,7 @@ test('spells: bar tabs only name real spells; empty tabs are hidden', function()
 end)
 
 test('ui: pick a cure on the bar, then click members - cure stays armed, right click cancels', function()
-    for _, style in ipairs({ 'grid', 'strip' }) do
+    for _, style in ipairs({ 'strip' }) do
         local cfg = new_cfg({ style = style, mode = 'party', spellbar = true })
         local f0 = bar_frame(cfg)
         eq(ui.state.armed, nil)
@@ -1472,7 +1189,7 @@ test('game source: reads your party from Ashita memory in the member shape (read
     eq(#r, 3)
     eq(r[1].name, 'Jintu'); truthy(r[1].is_you and r[1].dist == 0 and r[1].has_buff_data)
     eq(r[1].debuffs[1], 'silence'); eq(r[1].buffs[1].key, 'haste')
-    eq(r[2].name, 'Friend'); eq(r[2].dist, 12); eq(r[2].hpmax, 600); eq(r[2].has_buff_data, false)
+    eq(r[2].name, 'Friend'); eq(r[2].dist, 12); eq(r[2].hpmax, 600); eq(r[2].has_buff_data, true)
     truthy(r[3].zone_diff and not r[3].dead and r[3].dist == nil, 'other zone: no distance, not "dead"')
     eq(p.job, 3); eq(p.sublevel, 37); eq(p.silenced, true); eq(p.mp, 400)
     local pr = require('ch.spells').fit(require('ch.spells').preset_for(p.job, p.sub), p)
@@ -1671,6 +1388,547 @@ test('strip: debuffs live in a bottom icon strip (game icons when available, tex
         if c.op == 'text' then texts[c.s] = true end end
     truthy(texts.PSN or texts.SIL or texts.PAR or texts.DOM, 'text tags are the fallback')
     eq(debuffs.id_of.poison, 3); eq(debuffs.id_of.silence, 6)
+end)
+
+-- =============================================================================================
+-- strip-only layout, resizable rows and icons, buff icon bar
+-- =============================================================================================
+test('layout: strip footprint at 1080p, doubled at 4K, rows never overlap in any arrangement', function()
+    local g = layout.compute({ orientation = 'columns', groups = { 0 } }, 1080)
+    eq(g.width, 230); eq(g.height, 16 + 6 * 42 + 5 * 4)
+    eq(layout.compute({ orientation = 'columns', groups = { 0, 1, 2 } }, 1080).width, 3 * 230 + 2 * 8)
+    for _, mode in ipairs({ 'party', 'alliance1', 'alliance2' }) do
+        local o = { orientation = 'columns', groups = layout.groups_for(mode, false) }
+        local a, b = layout.compute(o, 1080), layout.compute(o, 2160)
+        near(b.width, a.width * 2, 4); near(b.height, a.height * 2, 6)
+    end
+    for _, orient in ipairs({ 'columns', 'stacked', 'rows' }) do
+        for _, h in ipairs({ 720, 1080, 1440, 2160 }) do
+            local gg = layout.compute({ orientation = orient, groups = { 0, 1, 2 }, row_w = 300, row_h = 60 }, h)
+            local list = {}
+            for _, c in pairs(gg.cards) do
+                truthy(c.x >= 0 and c.y >= gg.header_h and c.x + c.w <= gg.width and c.y + c.h <= gg.height, 'row outside panel')
+                list[#list + 1] = c
+            end
+            eq(#list, 18)
+            for i = 1, #list do
+                for j = i + 1, #list do
+                    local a, b = list[i], list[j]
+                    truthy(not (a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h), 'rows overlap')
+                end
+            end
+        end
+    end
+end)
+
+test('layout: row width, row height and icon sizes come from the settings, and the row stays tall enough for its icons', function()
+    local g = layout.compute({ orientation = 'columns', groups = { 0 }, row_w = 300, row_h = 60 }, 1080)
+    eq(g.card_w, 300); eq(g.card_h, 60)
+    local tall = layout.compute({ orientation = 'columns', groups = { 0 }, row_h = 30, debuff_icon = 32, buff_icon = 20 }, 1080)
+    eq(tall.card_h, 22 + 32, 'a 32px icon strip pushes a 30px row up')
+    local g2 = layout.compute({ orientation = 'columns', groups = { 0 }, row_w = 300, row_h = 60 }, 2160)
+    eq(g2.card_w, 600); eq(g2.card_h, 120)
+end)
+
+test('chconfig: row and icon sizes are clamped and the layout settings are gone', function()
+    local s = chconfig.sanitize({ row_w = 9999, row_h = 1, debuff_icon = 'x', buff_icon = 99, show_buff_bar = 'yes' })
+    eq(s.row_w, 360); eq(s.row_h, 30); eq(s.debuff_icon, chconfig.defaults.debuff_icon); eq(s.buff_icon, 32)
+    eq(s.show_buff_bar, true)
+    eq(chconfig.defaults.style, nil); eq(chconfig.defaults.show_job, nil); eq(chconfig.defaults.job_style, nil)
+end)
+
+test('commands: rowsize, icons, buffbar, mybuffs, buffmode', function()
+    local s = new_cfg({})
+    commands.run({ '/ch', 'rowsize', '300', '56' }, s); eq(s.row_w, 300); eq(s.row_h, 56)
+    commands.run({ '/ch', 'rowsize', '9999', '1' }, s); eq(s.row_w, 360); eq(s.row_h, 30)
+    local bad = commands.run({ '/ch', 'rowsize', 'x' }, s); truthy(bad.messages[1]:find('Usage'))
+    commands.run({ '/ch', 'icons', '20', '16' }, s); eq(s.debuff_icon, 20); eq(s.buff_icon, 16)
+    commands.run({ '/ch', 'icons', '12' }, s); eq(s.debuff_icon, 12); eq(s.buff_icon, 16)
+    commands.run({ '/ch', 'buffbar', 'off' }, s); eq(s.show_buff_bar, false)
+    commands.run({ '/ch', 'mybuffs', 'off' }, s); eq(s.buffs_mine_only, false)
+    commands.run({ '/ch', 'buffmode', 'buff' }, s); eq(s.buff_mode, true)
+    commands.run({ '/ch', 'buffmode' }, s); eq(s.buff_mode, false, 'no arg toggles')
+    truthy(commands.run({ '/ch', 'layout', 'full' }, s).messages[1]:find('Unknown'), 'layouts are gone')
+end)
+
+local BUFF_TAGS = { Hst = true, Rgn = true, Rfr = true, Flr = true, Pro = true, Shl = true, Phx = true,
+                    Ssk = true, Bnk = true, Aqv = true, Snk = true, Inv = true, RR = true }
+
+test('ui: the buff bar draws buff icons inside each row and can be switched off', function()
+    local function buff_texts(over, icons)
+        local cfg = new_cfg(over)
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        g.has_icons = icons or false
+        ui.draw_roster(f)
+        local tags, ico = 0, 0
+        for _, c in ipairs(g.cmds) do
+            if c.op == 'text' and BUFF_TAGS[c.s] then tags = tags + 1 end
+            if c.op == 'icon' then ico = ico + 1 end
+        end
+        return tags, ico, fr, g
+    end
+    local on = buff_texts({ mode = 'party' })
+    truthy(on >= 6, 'demo party shows buff tags, got ' .. on)
+    eq(buff_texts({ mode = 'party', show_buff_bar = false }), 0, 'no buff tags when the bar is off')
+    local _, ico = buff_texts({ mode = 'party' }, true)
+    truthy(ico >= 6, 'game icons are used when the backend can draw them, got ' .. ico)
+    -- every buff tag sits inside its own row, in the icon strip below the name
+    local cfg = new_cfg({ mode = 'alliance2', row_h = 60 })
+    local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+    ui.draw_roster(f)
+    for _, c in ipairs(g.cmds) do
+        if c.op == 'text' and BUFF_TAGS[c.s] then
+            local inside = false
+            for _, card in pairs(fr.geom.cards) do
+                local w = g.text_size(c.s)
+                if c.x >= card.x and c.x + w <= card.x + card.w and c.y >= card.y + card.h * 0.4 and c.y <= card.y + card.h then inside = true end
+            end
+            truthy(inside, 'buff tag outside its row: ' .. c.s)
+        end
+    end
+end)
+
+test('ui: icon size settings change the drawn icons; rows resize with the settings', function()
+    local function icon_sizes(over)
+        local cfg = new_cfg(over)
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        g.has_icons = true
+        ui.draw_roster(f)
+        local sizes = {}
+        for _, c in ipairs(g.cmds) do if c.op == 'icon' then sizes[c.w] = (sizes[c.w] or 0) + 1 end end
+        return sizes, fr
+    end
+    local small = icon_sizes({ mode = 'party', debuff_icon = 12, buff_icon = 12 })
+    local big, fr = icon_sizes({ mode = 'party', debuff_icon = 24, buff_icon = 24, row_h = 60, row_w = 300 })
+    truthy(small[12] and not small[24], 'small icons drawn at 12')
+    truthy(big[24] and not big[12], 'big icons drawn at 24')
+    eq(fr.geom.card_w, 300); eq(fr.geom.card_h, 60)
+end)
+
+test('ui: a locked plain row click casts the binding; unlocked and far-away clicks do nothing', function()
+    local function events(over, at_cell)
+        local cfg = new_cfg(over)
+        local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
+        ui.draw_roster(f0)
+        local cell = find_hitbox(f0.hitboxes, function(h) return h.kind == 'cell' and h.slot == 1 end)
+        local x, y = cell.x + 3, cell.y + 3
+        if not at_cell then x, y = 5000, 5000 end
+        local f = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(x, y, 'left', {}, over.locked ~= false))
+        ui.draw_roster(f)
+        return f.events
+    end
+    eq(#events({ mode = 'party', cell_binds = true }, true), 1)
+    eq(#events({ mode = 'party', cell_binds = true, locked = false }, true), 0, 'unlocked must not cast')
+    eq(#events({ mode = 'party', cell_binds = true }, false), 0, 'mouse elsewhere is ignored')
+end)
+
+test('flyout: clicks resolve the tier asked for, and an out-of-range member reports range', function()
+    local cfg = new_cfg({ mode = 'party' })
+    local plan, f = open_flyout(cfg, 1)
+    local ff = draw_fly(f, plan)
+    local tile = hb_of(ff, function(h) return h.kind == 'spell' and h.key == 'cure4' end)
+    local cx, cy = tile.x + tile.w / 2, tile.y + tile.h / 2
+    local function click(btn, mods) return draw_fly(f, plan, gfx_rec.input(cx, cy, btn, mods)).events end
+    eq(click('left')[1].spell, 'cure4'); eq(click('right')[1].spell, 'cure3', 'right click = one tier down')
+    eq(click('left', { shift = true })[1].spell, 'cure5', 'shift = one tier up')
+    local plan5, f5 = open_flyout(cfg, 5)     -- Dunstan, 24 yalms away
+    local t5 = hb_of(draw_fly(f5, plan5), function(h) return h.kind == 'spell' and h.key == 'cure4' end)
+    local ev = draw_fly(f5, plan5, gfx_rec.input(t5.x + 2, t5.y + 2, 'left')).events
+    eq(#ev, 1); eq(ev[1].state, 'range')
+end)
+
+-- =============================================================================================
+-- casting: busy gate, cast bar, click queue
+-- =============================================================================================
+local casting = require('ch.casting')
+local spellstate = require('ch.spellstate')
+
+test('spells: cast times come from the server data (Cure IV 2.5s, Raise III 13s, abilities none)', function()
+    eq(spells.defs.cure4.cast, 2.5); eq(spells.defs.raise3.cast, 13); eq(spells.defs.haste.cast, 3)
+    eq(spells.defs.divine_seal.cast, nil)
+end)
+
+test('casting: a cast is busy for its cast time plus the delay; Fast Cast shortens it; abilities only have the delay', function()
+    casting.reset()
+    casting.start(spells.defs.cure4, 10, { fast_cast = 0, cast_lockout = 1.0 })
+    near(casting.left(10), 3.5, 1e-9); near(casting.left(12), 1.5, 1e-9); eq(casting.left(13.6), 0)
+    local info = casting.info(11.25)
+    near(info.frac, 0.5, 1e-9, 'half way through the 2.5s cast')
+    casting.reset()
+    casting.start(spells.defs.cure4, 10, { fast_cast = 20, cast_lockout = 1.0 })
+    near(casting.left(10), 2.5 * 0.8 + 1.0, 1e-9)
+    casting.reset()
+    casting.start(spells.defs.divine_seal, 10, { cast_lockout = 0.8 })
+    near(casting.left(10), 0.8, 1e-9)
+    casting.reset(); eq(casting.left(0), 0); eq(casting.info(0), nil)
+end)
+
+test('casting: the real cast bar overrides the estimate; a bar that never shows releases a failed cast early', function()
+    casting.reset()
+    casting.start(spells.defs.cure4, 10, { cast_lockout = 1.0 })      -- estimate: busy until 13.5
+    casting.observe(10.5, 0.2)                                         -- 20% after 0.5s -> a 2.5s cast
+    near(casting.left(10.5), 3.5 - 0.5, 0.01)
+    casting.observe(11.5, 0.4)                                         -- slower than expected: a 3.75s cast
+    near(casting.left(11.5), 3.75 + 1.0 - 1.5, 0.01)
+    casting.observe(14.0, 1)                                           -- bar gone: only the delay is left
+    truthy(casting.left(14.0) <= 1.0 + 1e-9)
+    -- a cast that is interrupted at once never shows a bar (after it has worked once)
+    casting.start(spells.defs.cure4, 20, { cast_lockout = 1.0 })
+    casting.observe(20.2, 0)
+    near(casting.left(20.2), 3.5 - 0.2, 0.01, 'still within the grace period')
+    casting.observe(20.8, 0)
+    truthy(casting.left(20.8) <= 0.3 + 1e-9, 'released early')
+    -- without a working bar (unreadable or never seen), the estimate stands
+    casting.reset()
+    casting.start(spells.defs.cure4, 30, { cast_lockout = 1.0 })
+    casting.observe(31.0, 0); casting.observe(31.0, nil)
+    near(casting.left(31.0), 2.5, 0.01)
+end)
+
+test('casting: one queued click, newest wins, sent only when free, dropped when stale', function()
+    casting.reset()
+    casting.start(spells.defs.cure4, 10, { cast_lockout = 1.0 })
+    casting.queue({ spell = 'cure3', slot = 1 }, 11)
+    casting.queue({ spell = 'cure2', slot = 2 }, 12)
+    eq(casting.take(12.5), nil, 'still busy')
+    eq(casting.take(13.6).spell, 'cure2', 'the newest click goes out once you are free')
+    eq(casting.take(13.7), nil, 'only once')
+    casting.queue({ spell = 'cure3', slot = 1 }, 14)
+    eq(casting.take(30), nil, 'stale clicks are dropped')
+end)
+
+test('spellstate: busy is the last thing that stops a spell, so real blockers still show', function()
+    local m = { active = true, name = 'A', dist = 5, slot = 1 }
+    local p = { mp = 500, recast = {}, busy_left = 1.2 }
+    local state, left = spellstate.evaluate(spells.defs.cure4, m, p, { max_range = 20 })
+    eq(state, 'busy'); near(left, 1.2, 1e-9)
+    eq(spellstate.evaluate(spells.defs.cure4, { active = true, name = 'F', dist = 30, slot = 2 }, p, { max_range = 20 }), 'range')
+    p.mp = 1; eq(spellstate.evaluate(spells.defs.cure4, m, p, { max_range = 20 }), 'nomp')
+    p.mp = 500; p.recast = { cure4 = 3 }; eq(spellstate.evaluate(spells.defs.cure4, m, p, { max_range = 20 }), 'recast')
+    p.recast = {}; p.busy_left = 0; eq(spellstate.evaluate(spells.defs.cure4, m, p, { max_range = 20 }), 'ready')
+    p.busy_left = 1; eq(spellstate.evaluate(spells.defs.divine_seal, m, p, { max_range = 20 }), 'busy', 'abilities wait too')
+    truthy(spellstate.describe('busy', 1.2):find('queue'))
+end)
+
+test('actions: clicking while busy queues, the queue is sent when free; with queueing off it is refused', function()
+    casting.reset()
+    local logs, sent = {}, {}
+    local roster = { [1] = { name = 'Brannoch', slot = 1, active = true, dist = 5 } }
+    local cfg = new_cfg({ cast = true, demo = false, queue_clicks = true })
+    local function ctx(now)
+        return { cfg = cfg, now = now, log = function(x) logs[#logs + 1] = x end, roster_by_slot = roster, dismissed = {},
+                 changed = function() end, send = function(c) sent[#sent + 1] = c end }
+    end
+    local player = { mp = 500, recast = {} }
+    -- first click goes out and starts the busy period
+    eq(actions.perform({ type = 'cast', slot = 1, spell = 'cure4', state = 'ready' }, ctx(10)), 'sent')
+    eq(#sent, 1); truthy(sent[1]:find('Cure IV', 1, true))
+    truthy(casting.left(10.1) > 0)
+    -- second click mid-cast is held, not sent
+    eq(actions.perform({ type = 'cast', slot = 1, spell = 'cure3', state = 'busy', detail = 3 }, ctx(11)), 'queued')
+    eq(#sent, 1)
+    eq(actions.run_queued(ctx(12), player), nil, 'not free yet')
+    eq(#sent, 1)
+    eq(actions.run_queued(ctx(13.6), player), 'sent', 'sent the moment the player is free')
+    eq(#sent, 2); truthy(sent[2]:find('Cure III', 1, true))
+    truthy(casting.left(13.7) > 0, 'and it starts the next busy period')
+    -- queueing off: a busy click is refused with a message
+    cfg.queue_clicks = false
+    eq(actions.perform({ type = 'cast', slot = 1, spell = 'cure3', state = 'busy', detail = 2 }, ctx(14)), 'blocked')
+    eq(casting.take(30), nil)
+end)
+
+test('ui: a busy flyout tile is still clickable and emits a busy cast; the queued tile is outlined; progress bar drawn', function()
+    local cfg = new_cfg({ mode = 'party' })
+    local plan, f = open_flyout(cfg, 1)
+    casting.start(spells.defs.cure4, 3.0, cfg)
+    f.player.busy_left = casting.left(3.0)
+    f.player.casting = casting.info(3.0)
+    local ff = draw_fly(f, plan)
+    local tile = hb_of(ff, function(h) return h.kind == 'spell' and h.key == 'cure3' end)
+    local ff2 = draw_fly(f, plan, gfx_rec.input(tile.x + 2, tile.y + 2, 'left'))
+    eq(#ff2.events, 1); eq(ff2.events[1].state, 'busy'); eq(ff2.events[1].spell, 'cure3')
+    local bar = false
+    for _, c in ipairs(ff.gfx.cmds) do
+        if c.op == 'rect' and c.y > plan.y + plan.h - 8 and c.w > plan.w * 0.5 then bar = true end
+    end
+    truthy(bar, 'cast progress bar along the bottom of the flyout')
+end)
+
+test('chconfig/commands: queue, fast cast and delay settings', function()
+    local s = chconfig.sanitize({ fast_cast = 500, cast_lockout = 0.01, queue_clicks = false })
+    eq(s.fast_cast, 80); near(s.cast_lockout, 0.3, 1e-9); eq(s.queue_clicks, false)
+    local c = new_cfg({})
+    commands.run({ '/ch', 'queue', 'off' }, c); eq(c.queue_clicks, false)
+    commands.run({ '/ch', 'fastcast', '25' }, c); eq(c.fast_cast, 25)
+    commands.run({ '/ch', 'lockout', '1.5' }, c); near(c.cast_lockout, 1.5, 1e-9)
+    truthy(commands.run({ '/ch', 'fastcast', 'x' }, c).messages[1]:find('Usage'))
+end)
+
+test('commands: /ch status reports the switches and explains why the hover would be off', function()
+    local s = new_cfg({ locked = false, flyout = false })
+    local msgs = commands.run({ '/ch', 'status' }, s).messages
+    local joined = table.concat(msgs, '\n')
+    truthy(joined:find('locked: off', 1, true) and joined:find('hover flyout: off', 1, true))
+    truthy(joined:find('/ch lock', 1, true) and joined:find('/ch flyout on', 1, true))
+    local ok = table.concat(commands.run({ '/ch', 'status' }, new_cfg({})).messages, '\n')
+    truthy(not ok:find('/ch lock', 1, true), 'no warning when everything is fine')
+end)
+
+-- =============================================================================================
+-- job colors palette and job icons
+-- =============================================================================================
+local jobicons = require('ch.jobicons')
+
+test('theme: the job palette tints the healthy HP fill with the job color and keeps the warning colors', function()
+    local pal = theme.get('job')
+    truthy(pal.job_tint and pal ~= theme.get('modern'))
+    local mod = theme.get('modern')
+    local pld = { 0.92, 0.74, 0.30 }
+    local top = theme.hp_fill(pal, 1.0, pld)
+    truthy(top ~= theme.hp_fill(mod, 1.0, pld), 'job color at full HP')
+    local r, g, b = theme.unpack(top)
+    truthy(r > g and g > b, 'still the warm job hue')
+    local wr, wg, wb = theme.unpack(theme.hp_fill(pal, 1.0, { require('ch.jobs').hue(3) }))
+    truthy(0.30 * wr + 0.59 * wg + 0.11 * wb <= 0.52, 'a light job color is darkened so white text stays readable')
+    eq(theme.hp_fill(pal, 0.05, pld), theme.hp_fill(mod, 0.05, pld), 'low HP is the same red either way')
+    eq(theme.hp_fill(mod, 1.0, pld), theme.hp_fill(mod, 1.0), 'other palettes ignore the job color')
+    local cfg = new_cfg({ colors = 'job' }); eq(cfg.colors, 'job')
+    eq(chconfig.sanitize({ colors = 'nope' }).colors, 'modern')
+end)
+
+test('ui: job colors give each row its own healthy color', function()
+    local function fills(colors)
+        local cfg = new_cfg({ mode = 'party', colors = colors })
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        local seen = {}
+        for _, c in ipairs(g.cmds) do
+            if c.op == 'rect' and c.w > 40 and c.h > 20 then seen[c.c] = true end
+        end
+        return seen
+    end
+    local a, b, differ = fills('job'), fills('modern'), false
+    for c in pairs(a) do if not b[c] then differ = true end end
+    truthy(differ, 'the job palette paints fills the modern palette does not')
+end)
+
+test('jobicons: every job has a pictogram that stays inside its box; the icon replaces the letters when switched on', function()
+    for id = 1, 22 do
+        truthy(jobicons.has(id), 'glyph for job ' .. id)
+        for _, sh in ipairs(jobicons.glyphs[id]) do
+            local pts = {}
+            if sh[1] == 'r' then
+                pts = { { sh[2], sh[3] }, { sh[2] + sh[4], sh[3] + sh[5] } }
+            else
+                for i = 2, 8, 2 do pts[#pts + 1] = { sh[i], sh[i + 1] } end
+            end
+            for _, p in ipairs(pts) do truthy(p[1] >= -0.001 and p[1] <= 1.001 and p[2] >= -0.001 and p[2] <= 1.001, 'job ' .. id .. ' shape leaves the box') end
+        end
+        local g = gfx_rec.new(1)
+        truthy(jobicons.draw(g, id, 0, 0, 24, 0xffffffff)); truthy(#g.cmds >= 1)
+    end
+    eq(jobicons.has(99), false)
+    local function letters(on)
+        local cfg = new_cfg({ mode = 'party', job_icon = on })
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        local n = 0
+        for _, c in ipairs(g.cmds) do if c.op == 'text' and (c.s == 'WHM' or c.s == 'PLD' or c.s == 'BLM') then n = n + 1 end end
+        return n
+    end
+    eq(letters(false), 3); eq(letters(true), 0)
+    local s = new_cfg({}); commands.run({ '/ch', 'jobicons', 'on' }, s); eq(s.job_icon, true)
+    commands.run({ '/ch', 'colors', 'job' }, s); eq(s.colors, 'job')
+end)
+
+test('game source: other members\' buffs and debuffs come from the party status data; a trust with none shows no data', function()
+    local game = require('ch.source_game')
+    local icons = { [0] = 33, 3, 255, 255 }          -- Haste, Poison
+    local party = {
+        GetMemberIsActive = function(_, i) return (i <= 2) and 1 or 0 end,
+        GetMemberName = function(_, i) return ({ [0] = 'Jintu', 'Friend', 'Trust' })[i] end,
+        GetMemberHP = function() return 500 end, GetMemberHPPercent = function() return 100 end,
+        GetMemberMP = function() return 100 end, GetMemberMPPercent = function() return 100 end,
+        GetMemberZone = function() return 143 end,
+        GetMemberMainJob = function() return 3 end, GetMemberSubJob = function() return 0 end,
+        GetMemberMainJobLevel = function() return 75 end, GetMemberTargetIndex = function(_, i) return 100 + i end,
+        GetStatusIconsServerId = function(_, i) return (i == 1) and 12345 or 0 end,   -- the trust has none
+        GetStatusIcons = function(_, i) return (i == 1) and icons or nil end,
+        GetStatusIconsBitMask = function() return 0 end,
+    }
+    local player = { GetHPMax = function() return 800 end, GetMPMax = function() return 400 end,
+        GetBuffs = function() return {} end }
+    local entity = { GetDistance = function() return 25 end }
+    local saved = _G.AshitaCore
+    _G.AshitaCore = { GetMemoryManager = function() return {
+        GetParty = function() return party end, GetPlayer = function() return player end,
+        GetEntity = function() return entity end } end }
+    local r = game.roster(0, {})
+    _G.AshitaCore = saved
+    eq(r[2].has_buff_data, true); eq(r[2].buffs[1].key, 'haste'); eq(r[2].debuffs[1], 'poison')
+    eq(r[3].has_buff_data, true, 'chat-tracked, so empty rather than unknown'); eq(#r[3].buffs, 0)
+end)
+
+test('chatstatus: buffs and debuffs follow the chat log, including wear-off and defeat', function()
+    local cs = require('ch.chatstatus')
+    cs.reset()
+    cs.feed('Zeid gains the effect of Shell.', 1); cs.feed('Zeid gains the effect of Haste.', 1)
+    cs.feed('Zeid gains the effect of Protect.', 1); cs.feed('Zeid is poisoned.', 2)
+    local d, b = cs.get('Zeid', 3)
+    eq(d[1], 'poison'); eq(#b, 3); eq(b[1].key, 'haste')
+    cs.feed("Zeid's Haste effect wears off.", 4); cs.feed('Zeid is no longer poisoned.', 4)
+    d, b = cs.get('Zeid', 5)
+    eq(#d, 0); eq(#b, 2)
+    cs.feed('Zeid gains the effect of Sleep.', 6)
+    eq(cs.get('Zeid', 7)[1], 'sleep')
+    cs.feed('Zeid is no longer afflicted with Sleep.', 8); eq(#(cs.get('Zeid', 9)), 0)
+    cs.feed('\30\2Zeid gains the effect of Regen.', 10)       -- color codes are ignored
+    eq(cs.get('Zeid', 11) and select(2, cs.get('Zeid', 11))[1].key, 'regen')
+    cs.feed('Zeid falls to the ground.', 12); eq(#(select(2, cs.get('Zeid', 13))), 0)
+    eq(cs.feed('The Ul\'aern gains the effect of Protect.', 1), true)   -- tracked but never asked for
+    local _, old = cs.get('Nobody', 99); eq(#old, 0)
+    cs.reset()
+end)
+
+
+test('game source: your own buffs are read from an indexable array that is not a plain table (Ashita userdata)', function()
+    local game = require('ch.source_game')
+    local data = { [0] = 33, 40, 3, 255 }
+    local arr = setmetatable({}, { __index = function(_, i) return data[i] or 255 end })   -- stands in for userdata
+    local party = {
+        GetMemberIsActive = function(_, i) return (i == 0) and 1 or 0 end,
+        GetMemberName = function() return 'Jintu' end,
+        GetMemberHP = function() return 500 end, GetMemberHPPercent = function() return 100 end,
+        GetMemberMP = function() return 100 end, GetMemberMPPercent = function() return 100 end,
+        GetMemberZone = function() return 143 end,
+        GetMemberMainJob = function() return 3 end, GetMemberSubJob = function() return 0 end,
+        GetMemberMainJobLevel = function() return 75 end, GetMemberTargetIndex = function() return 1 end,
+        GetStatusIconsServerId = function() return 0 end,
+    }
+    local player = { GetHPMax = function() return 800 end, GetMPMax = function() return 400 end, GetBuffs = function() return arr end }
+    local saved = _G.AshitaCore
+    _G.AshitaCore = { GetMemoryManager = function() return {
+        GetParty = function() return party end, GetPlayer = function() return player end,
+        GetEntity = function() return { GetDistance = function() return 0 end } end } end }
+    local r = game.roster(0, {})
+    _G.AshitaCore = saved
+    eq(r[1].debuffs[1], 'poison'); eq(r[1].buffs[1].key, 'haste'); eq(r[1].buffs[2].key, 'protect')
+end)
+
+
+test('mp: percent text and bar thickness are options; a thick bar makes the row taller instead of overlapping', function()
+    local function run_with(over)
+        local cfg = new_cfg(over)
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        return f, g, fr
+    end
+    local function pct_texts(g)
+        local n = 0
+        for _, c in ipairs(g.cmds) do if c.op == 'text' and c.s:match('^%d+%%$') then n = n + 1 end end
+        return n
+    end
+    local _, g0 = run_with({ mode = 'party' })
+    local _, g1 = run_with({ mode = 'party', show_mp_pct = true })
+    truthy(pct_texts(g1) > pct_texts(g0), 'MP percent adds text')
+    local _, g2 = run_with({ mode = 'party', show_mp = false, show_mp_pct = true })
+    eq(pct_texts(g2), pct_texts(g0), 'no MP bar, no MP percent')
+    local a = layout.compute({ row_h = 30, debuff_icon = 14, buff_icon = 14, mp_h = 3 }, 1080)
+    local b = layout.compute({ row_h = 30, debuff_icon = 14, buff_icon = 14, mp_h = 12 }, 1080)
+    truthy(b.card_h > a.card_h, 'thicker MP bar needs a taller row')
+    eq(chconfig.sanitize({ mp_height = 99 }).mp_height, 14); eq(chconfig.sanitize({ mp_height = 0 }).mp_height, 2)
+    local s = new_cfg({}); commands.run({ '/ch', 'mp', 'pct', 'on' }, s); eq(s.show_mp_pct, true)
+    commands.run({ '/ch', 'mp', 'height', '9' }, s); eq(s.mp_height, 9)
+end)
+
+
+test('mp percent: sits under the HP percent, smaller, right-aligned, and the row grows to fit', function()
+    local cfg = new_cfg({ mode = 'party', show_mp_pct = true, mp_pct_scale = 0.6 })
+    local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+    ui.draw_roster(f)
+    local hp, mp
+    for _, c in ipairs(g.cmds) do
+        if c.op == 'text' and c.s:match('^%d+%%$') and c.c ~= 0 then
+            if c.k then mp = mp or c elseif not hp then hp = c end
+        end
+    end
+    truthy(hp and mp, 'both percents drawn')
+    truthy(mp.y > hp.y, 'MP percent is below HP percent')
+    eq(mp.k, 0.6)
+    local a = layout.compute({ row_h = 42, debuff_icon = 14, buff_icon = 14 }, 1080)
+    local b = layout.compute({ row_h = 42, debuff_icon = 14, buff_icon = 14, mp_pct = 1.0 }, 1080)
+    truthy(b.card_h > a.card_h)
+    eq(chconfig.sanitize({ mp_pct_scale = 5 }).mp_pct_scale, 1.0)
+end)
+
+
+-- =============================================================================================
+-- hairline skin and triage view
+-- =============================================================================================
+local triage = require('ch.triage')
+
+test('triage: neediest first, unreachable members last, featured member is sticky, best-fit cure', function()
+    local cfg = new_cfg({})
+    local function mem(slot, hp, max, extra)
+        local m = { slot = slot, active = true, name = 'M' .. slot, hp = hp, hpmax = max, hpp = 100 * hp / max, dist = 5 }
+        for k, v in pairs(extra or {}) do m[k] = v end
+        return m
+    end
+    local a, b, c, d = mem(0, 900, 1000), mem(1, 300, 1000), mem(2, 100, 1000, { dist = 40 }), mem(3, 0, 1000, { dead = true })
+    local list = triage.order({ a, b, c, d }, cfg)
+    eq(list[1].slot, 1); eq(list[2].slot, 0)
+    eq(list[#list].slot >= 2, true, 'out of range and KO go last')
+    eq(triage.pick(list, cfg, nil).slot, 1)
+    local e = mem(4, 280, 1000)                     -- slightly worse than b: the panel stays on b
+    eq(triage.pick(triage.order({ a, b, e }, cfg), cfg, 1).slot, 1)
+    local f2 = mem(5, 50, 1000)                     -- clearly worse: it switches
+    eq(triage.pick(triage.order({ a, b, f2 }, cfg), cfg, 1).slot, 5)
+    eq(triage.best({ 'cure1', 'cure2', 'cure3', 'cure4' }, 300), 'cure3')
+    eq(triage.best({ 'cure1', 'cure2' }, 900), 'cure2', 'strongest when none covers the gap')
+end)
+
+test('hairline: the big percentage is colored by health and is drawn scaled; no card behind it', function()
+    local function pct_colors(skin)
+        local cfg = new_cfg({ mode = 'party', skin = skin })
+        local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+        ui.draw_roster(f)
+        local out = {}
+        for _, c in ipairs(g.cmds) do
+            if c.op == 'text' and c.k and c.k > 1.2 and c.s:match('^%d+$') and c.c ~= 0 then out[#out + 1] = c end
+        end
+        return out, g
+    end
+    local big = pct_colors('hairline')
+    truthy(#big >= 3, 'large percentages drawn')
+    local seen = {}
+    for _, c in ipairs(big) do seen[c.c] = true end
+    local n = 0; for _ in pairs(seen) do n = n + 1 end
+    truthy(n >= 2, 'different health, different colors')
+    eq(#pct_colors('solid'), 0, 'solid skin has no large percentages')
+    eq(chconfig.sanitize({ skin = 'nope' }).skin, 'solid')
+end)
+
+test('triage view: panel geometry, featured member, cure tiles cast on the featured member', function()
+    local cfg = new_cfg({ mode = 'party', triage = true })
+    local f, fr, g = build_ui_frame(cfg, 1080, 3.0)
+    truthy(fr.geom.tri, 'triage geometry')
+    eq(next(fr.geom.cards), nil, 'no per-member cards')
+    local f0 = build_ui_frame(cfg, 1080, 3.0, nil, true)
+    ui.draw_roster(f0)
+    local hit
+    for _, hb in ipairs(f0.hitboxes) do if hb.kind == 'spell' then hit = hb end end
+    truthy(hit, 'cure tiles are clickable')
+    ui.reset_state()
+    local f2 = build_ui_frame(cfg, 1080, 3.0, gfx_rec.input(hit.x + hit.w / 2, hit.y + hit.h / 2, 'left'))
+    local ev = ui.draw_roster(f2)
+    local cast
+    for _, e2 in ipairs(ev) do if e2.type == 'cast' then cast = e2 end end
+    truthy(cast, 'tile click casts')
+    eq(cast.slot, hit.slot, 'on the featured member')
+    local small = layout.compute({ triage = true, triage_n = 0, debuff_icon = 14, buff_icon = 14 }, 1080)
+    local big = layout.compute({ triage = true, triage_n = 5, debuff_icon = 14, buff_icon = 14 }, 1080)
+    truthy(big.height > small.height)
 end)
 
 print(string.format('\n%d passed, %d failed', passed, failed))

@@ -11,7 +11,7 @@ if (-not $lua) {
 
 Write-Host "Using $($lua.Source)`n"
 $failed = 0
-foreach ($t in 'tests/run.lua', 'tests/smoke_ashita.lua') {
+foreach ($t in 'tests/run.lua', 'tests/smoke_ashita.lua', 'tests/config_layout.lua') {
     Write-Host "== $t" -ForegroundColor Cyan
     & $lua.Source $t
     if ($LASTEXITCODE -ne 0) { $failed++ }

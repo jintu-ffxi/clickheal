@@ -29,6 +29,15 @@ function M.new(font_scale)
         g.cmds[#g.cmds + 1] = { op = 'text', x = x, y = y, c = c, s = s }
     end
 
+    function g.text_scaled(x, y, c, s, k)
+        g.cmds[#g.cmds + 1] = { op = 'text', x = x, y = y, c = c, s = s, k = k }
+    end
+
+    function g.text_size_scaled(s, k)
+        local w, h = g.text_size(s)
+        return w * k, h * k
+    end
+
     function g.text_size(s)
         return #s * 7 * g.font_scale, 13 * g.font_scale
     end
@@ -48,6 +57,13 @@ function M.new(font_scale)
     function g.status_icon(x, y, size, status_id)
         if not g.has_icons then return false end
         g.cmds[#g.cmds + 1] = { op = 'icon', x = x, y = y, w = size, h = size, id = status_id }
+        return true
+    end
+
+    -- User-supplied job icon files: off by default; set g.has_job_files = true to record 'jobfile' commands.
+    function g.job_icon(x, y, size, abbr)
+        if not g.has_job_files then return false end
+        g.cmds[#g.cmds + 1] = { op = 'jobfile', x = x, y = y, w = size, h = size, id = abbr }
         return true
     end
 

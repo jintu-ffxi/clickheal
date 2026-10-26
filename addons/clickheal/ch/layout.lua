@@ -12,18 +12,13 @@ local layout = {}
 layout.BASE_HEIGHT = 1080
 layout.PARTY_SIZE  = 6
 
--- Base (1080p) metrics per style.
--- btn_y: top of the spell row inside a full card.
-layout.STYLES = {
-    full    = { card_w = 290, card_h = 62, btn = 26, btn_gap = 3, pad = 5, btn_y = 33 },
-    compact = { card_w = 320, card_h = 28, btn = 24, btn_gap = 2, pad = 4, btn_y = 2 },
-    minimal = { card_w = 210, card_h = 26, btn = 24, btn_gap = 2, pad = 3, btn_y = 1 },
-    strip   = { card_w = 230, card_h = 42, btn = 24, btn_gap = 2, pad = 4, btn_y = 0 },   -- job block + slim bars
-    grid    = { card_w = 140, card_h = 42, btn = 24, btn_gap = 2, pad = 4, btn_y = 0 },   -- whole cell is the click target
-}
+-- Base (1080p) metrics of one strip row: a job block, then the HP-fill row with debuff icons below.
+layout.STRIP = { card_w = 230, card_h = 42, pad = 4, text_h = 22 }   -- text_h: name line + gaps above the icon strip
 
-layout.BUFF_H     = 11   -- buff pip strip (full style only, when show_buffs)
-layout.BAR = { btn = 26, gap = 3, tab_h = 15, pad = 4, tiles = 9 }   -- shared spell bar (grid / strip)
+-- Triage view (base px): the featured member's panel, then a compact list of everyone else.
+layout.TRI = { pad = 6, gap = 6, head_h = 24, bar_h = 14, tile_h = 34, list_h = 18, list_gap = 2 }
+
+layout.BAR = { btn = 26, gap = 3, tab_h = 15, pad = 4, tiles = 9 }   -- optional shared spell bar under the rows
 layout.HEADER_H   = 16   -- slim title strip
 layout.LABEL_H    = 13   -- per-group label (only when more than one group is shown)
 layout.CARD_GAP   = 4
@@ -48,27 +43,23 @@ local function round(v) return math.floor(v + 0.5) end
 --- Computes every rectangle the UI needs, in final screen pixels relative to the panel origin.
 --
 -- opts:
---   style, orientation, auto_scale, scale
+--   orientation, auto_scale, scale, spellbar
 --   groups : array of group indexes to show (0 = your party, 1 = alliance 1, 2 = alliance 2)
 -- Returns a table; `cards[slot]` = { x, y, w, h, group, index } where slot = group * 6 + index.
 function layout.compute(opts, display_h)
-    local base = layout.STYLES[opts.style] or layout.STYLES.full
+    local base = layout.STRIP
     local s = layout.scale(opts, display_h)
-    local buff_h = ((opts.style or 'full') == 'full' and opts.show_buffs ~= false) and layout.BUFF_H or 0
 
     local g = {
         scale   = s,
-        style   = opts.style or 'full',
         orient  = opts.orientation or 'columns',
         header_h = round(layout.HEADER_H * s),
-        card_w  = round(base.card_w * s),
-        card_h  = round((base.card_h + buff_h) * s),
-        buff_h  = round(buff_h * s),
-        btn     = round(math.max(base.btn, layout.MIN_BTN) * s),
-        btn_gap = math.max(1, round(base.btn_gap * s)),
+        card_w  = round((opts.row_w or base.card_w) * s),
+        -- Tall enough for the name line plus the icon strip, whatever the user picked.
+        card_h  = round(math.max(opts.row_h or base.card_h, ((opts.skin == 'hairline') and 28 or base.text_h) + math.max(opts.debuff_icon or 14, opts.buff_icon or 14)
+            + math.max(0, (opts.mp_h or 0) - 3)
+            + (opts.mp_pct and math.ceil(20 * opts.mp_pct) or 0)) * s),
         pad     = math.max(1, round(base.pad * s)),
-        btn_y   = round((base.btn_y + buff_h) * s),
-        buff_y  = round(base.btn_y * s),
         gap     = math.max(1, round(layout.CARD_GAP * s)),
         group_gap = round(layout.GROUP_GAP * s),
         groups  = {},
@@ -77,6 +68,7 @@ function layout.compute(opts, display_h)
 
     local groups = opts.groups
     if not groups or #groups == 0 then groups = { 0 } end
+    if opts.triage then groups = {} end   -- the triage panel replaces the per-member rows
     local multi = #groups > 1
     g.label_h = multi and round(layout.LABEL_H * s) or 0
 
@@ -111,8 +103,26 @@ function layout.compute(opts, display_h)
         end
     end
 
-    -- Shared spell bar under the cells (Grid / Strip only).
-    if opts.spellbar and (g.style == 'grid' or g.style == 'strip') then
+    if opts.triage then
+        local T = layout.TRI
+        local pad, gap = round(T.pad * s), round(T.gap * s)
+        local icon_h = round(math.max(opts.debuff_icon or 14, opts.buff_icon or 14) * s)
+        local head_h, bar_h, tile_h = round(T.head_h * s), round(T.bar_h * s), round(T.tile_h * s)
+        local main_h = pad + head_h + gap + bar_h + gap + icon_h + gap + tile_h + pad
+        local n = math.max(0, opts.triage_n or 0)
+        local row, lg = round(T.list_h * s), math.max(1, round(T.list_gap * s))
+        local list_h = (n > 0) and (n * row + (n - 1) * lg) or 0
+        g.tri = {
+            main = { x = 0, y = g.header_h, w = g.card_w, h = main_h, pad = pad, gap = gap,
+                head_h = head_h, bar_h = bar_h, icon_h = icon_h, tile_h = tile_h },
+            list = { x = 0, y = g.header_h + main_h + gap, w = g.card_w, row = row, gap = lg, n = n },
+        }
+        total_w = g.card_w
+        total_h = g.header_h + main_h + ((n > 0) and (gap + list_h) or 0)
+    end
+
+    -- Shared spell bar under the rows.
+    if opts.spellbar then
         local b = layout.BAR
         local btn = round(math.max(b.btn, layout.MIN_BTN) * s)
         local gap = math.max(1, round(b.gap * s))
@@ -127,18 +137,6 @@ function layout.compute(opts, display_h)
     end
 
     g.width, g.height = total_w, total_h
-
-    -- How many spell buttons fit on one card's spell row (full) or button strip (compact/minimal).
-    local avail
-    if g.style == 'full' then
-        avail = g.card_w - 2 * g.pad
-    elseif g.style == 'compact' then
-        avail = round(4 * (base.btn + base.btn_gap) * s)  -- room reserved on the right
-    else
-        avail = round(4 * (base.btn + base.btn_gap) * s)  -- hover overlay on the right
-    end
-    g.max_buttons = math.max(1, math.floor((avail + g.btn_gap) / (g.btn + g.btn_gap)))
-    g.buttons_w = g.max_buttons * (g.btn + g.btn_gap) - g.btn_gap
     return g
 end
 

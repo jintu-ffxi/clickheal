@@ -178,11 +178,11 @@ test('registers load, unload, command and d3d_present handlers', function()
     eq(addon.name, 'clickheal')
 end)
 
-test('load announces Phase 1 and that nothing is sent to the game', function()
+test('load announces that casting is off until enabled', function()
     handlers.load()
     local joined = table.concat(printed, '\n')
-    truthy(joined:find('Phase 1', 1, true))
-    truthy(joined:find('nothing is sent to the game', 1, true))
+    truthy(joined:find('Loaded', 1, true))
+    truthy(joined:find('Casting is off', 1, true))
 end)
 
 test('default frames draw both windows, balanced, with no errors', function()
@@ -204,15 +204,13 @@ test('commands: /ch is consumed, other commands are left alone', function()
     truthy(settings_state.saves > 0, 'changing a setting saves')
 end)
 
-test('grid and strip with the spell bar draw balanced and error-free in every mode', function()
-    run_command('/ch reset confirm'); run_command('/ch lock')
-    for _, style in ipairs({ 'grid', 'strip' }) do
-        for _, mode in ipairs({ 'alliance2', 'party' }) do
-            run_command('/ch layout ' .. style); run_command('/ch mode ' .. mode)
-            for _, tab in ipairs({ 'heal', 'cleanse', 'buff', 'raise' }) do
-                run_command('/ch tab ' .. tab)
-                for _ = 1, 3 do frame_tick() end
-            end
+test('strip rows with the spell bar draw balanced and error-free in every mode', function()
+    run_command('/ch reset confirm'); run_command('/ch lock'); run_command('/ch bar on')
+    for _, mode in ipairs({ 'alliance2', 'party' }) do
+        run_command('/ch mode ' .. mode)
+        for _, tab in ipairs({ 'heal', 'cleanse', 'buff', 'raise' }) do
+            run_command('/ch tab ' .. tab)
+            for _ = 1, 3 do frame_tick() end
         end
     end
     balanced()
@@ -220,9 +218,9 @@ test('grid and strip with the spell bar draw balanced and error-free in every mo
 end)
 
 test('hovering a Strip row opens the flyout window, clicking a tile logs a cast, and it all stays balanced', function()
-    run_command('/ch reset confirm'); run_command('/ch lock'); run_command('/ch layout strip')
+    run_command('/ch reset confirm'); run_command('/ch lock')
     local layout = require('ch.layout')
-    local g = layout.compute({ style = 'strip', orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
+    local g = layout.compute({ orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
     local c = g.cards[1]
     sim.begun = {}
     sim.mouse, sim.hover, sim.click = { 100 + c.x + 60, 100 + c.y + 8 }, true, nil
@@ -238,12 +236,32 @@ test('hovering a Strip row opens the flyout window, clicking a tile logs a cast,
     eq(errors_logged(), 0)
 end)
 
-test('/ch layout and mode changes take effect on the next frame without errors', function()
-    for _, style in ipairs({ 'compact', 'minimal', 'full' }) do
-        for _, mode in ipairs({ 'alliance2', 'alliance1', 'party' }) do
-            run_command('/ch layout ' .. style); run_command('/ch mode ' .. mode)
-            for _ = 1, 3 do frame_tick() end
-        end
+test('mode, row size and icon changes take effect on the next frame without errors', function()
+    for _, mode in ipairs({ 'alliance2', 'alliance1', 'party' }) do
+        run_command('/ch mode ' .. mode)
+        for _ = 1, 3 do frame_tick() end
+    end
+    run_command('/ch rowsize 320 64'); run_command('/ch icons 24 20')
+    for _ = 1, 3 do frame_tick() end
+    run_command('/ch buffbar off')
+    for _ = 1, 3 do frame_tick() end
+    balanced(); eq(errors_logged(), 0)
+end)
+
+test('the hover flyout still opens with every "other ways to cast" option switched on', function()
+    local layout = require('ch.layout')
+    for _, setup in ipairs({ { 'bar on' }, { 'cellbinds on' }, { 'buffmode buff' }, { 'bar on', 'cellbinds on', 'buffmode buff' } }) do
+        run_command('/ch reset confirm'); run_command('/ch lock')
+        for _, c in ipairs(setup) do run_command('/ch ' .. c) end
+        local g = layout.compute({ orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0,
+            spellbar = setup[1] == 'bar on' }, 1080)
+        local c = g.cards[1]
+        sim.begun = {}
+        sim.mouse, sim.hover, sim.click = { 100 + c.x + 60, 100 + c.y + 8 }, true, nil
+        for _ = 1, 4 do frame_tick() end
+        truthy((sim.begun['ClickHeal Flyout'] or 0) >= 1, 'flyout did not open with: ' .. table.concat(setup, ', '))
+        sim.hover = false; sim.mouse = { 1900, 1050 }
+        for _ = 1, 600 do frame_tick() end
     end
     balanced(); eq(errors_logged(), 0)
 end)
@@ -281,18 +299,16 @@ test('/ch apicheck runs and reports', function()
     truthy(joined:find('API check', 1, true) and joined:find('Result:', 1, true))
 end)
 
-test('clicking a spell button logs the cast and sends nothing to the game', function()
+test('a plain row click logs the cast and sends nothing to the game', function()
     run_command('/ch reset confirm')
-    run_command('/ch layout full')   -- default is Strip; this test clicks a Full-layout tile
+    run_command('/ch cellbinds on')   -- plain clicks cast the bound spell (off by default: the flyout is the main way)
     run_command('/ch lock')
     for _ = 1, 3 do frame_tick() end
-    -- Brannoch (slot 1), first button (Cure IV). The window is stubbed to sit at (100,100).
+    -- Brannoch (slot 1), left click = Cure IV. The window is stubbed to sit at (100,100).
     local layout = require('ch.layout')
-    local g = layout.compute({ style = 'full', orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
+    local g = layout.compute({ orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
     local c = g.cards[1]
-    local bx = 100 + c.x + g.pad + g.btn / 2
-    local by = 100 + c.y + g.btn_y + g.btn / 2
-    sim.mouse, sim.hover, sim.click = { bx, by }, true, 0
+    sim.mouse, sim.hover, sim.click = { 100 + c.x + 60, 100 + c.y + 8 }, true, 0
     local n = #printed
     frame_tick()
     sim.click = nil; sim.hover = false
@@ -302,12 +318,11 @@ test('clicking a spell button logs the cast and sends nothing to the game', func
 end)
 
 test('unlocked frames do not cast on click', function()
-    run_command('/ch layout full')
     run_command('/ch unlock')
     local layout = require('ch.layout')
-    local g = layout.compute({ style = 'full', orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
+    local g = layout.compute({ orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
     local c = g.cards[1]
-    sim.mouse = { 100 + c.x + g.pad + g.btn / 2, 100 + c.y + g.btn_y + g.btn / 2 }
+    sim.mouse = { 100 + c.x + 60, 100 + c.y + 8 }
     sim.hover, sim.click = true, 0
     local n = #printed
     frame_tick()
@@ -330,9 +345,9 @@ end)
 test('a throwing tooltip call still ends the tooltip', function()
     run_command('/ch reset confirm'); run_command('/ch lock')
     local layout = require('ch.layout')
-    local g = layout.compute({ style = 'full', orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
+    local g = layout.compute({ orientation = 'columns', groups = { 0 }, auto_scale = true, scale = 1.0 }, 1080)
     local c = g.cards[1]
-    sim.mouse = { 100 + c.x + g.pad + g.btn / 2, 100 + c.y + g.btn_y + g.btn / 2 }
+    sim.mouse = { 100 + c.x + 60, 100 + c.y + 8 }
     sim.hover = true
     sim.throw_in_text = true
     frame_tick()

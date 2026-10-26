@@ -14,6 +14,7 @@
 
 local spells     = require('ch.spells')
 local spellstate = require('ch.spellstate')
+local casting    = require('ch.casting')
 
 local actions = {}
 
@@ -90,6 +91,17 @@ function actions.perform(ev, ctx)
     local m = ctx.roster_by_slot[ev.slot]
     local who = m and m.name or ('slot ' .. tostring(ev.slot))
 
+    -- Mid-cast (or in the delay after an action): hold the click and send it when the player is free.
+    if ev.state == 'busy' then
+        if ctx.cfg and ctx.cfg.queue_clicks then
+            casting.queue(ev, ctx.now)
+            ctx.log(string.format('[ClickHeal] queued %s -> %s (sends when you can cast)', def.name, def.selfonly and 'you' or who))
+            return 'queued'
+        end
+        ctx.log(string.format("[ClickHeal] Can't cast %s yet: %s", def.name, spellstate.describe(ev.state, ev.detail)))
+        return 'blocked'
+    end
+
     if ev.state and ev.state ~= 'ready' then
         ctx.log(string.format("[ClickHeal demo] Can't cast %s on %s: %s",
             def.name, who, spellstate.describe(ev.state, ev.detail)))
@@ -101,6 +113,7 @@ function actions.perform(ev, ctx)
     if ctx.send and ctx.cfg and ctx.cfg.cast and not ctx.demo then
         local cmd = actions.command_for(def, token)
         ctx.send(cmd)
+        casting.start(def, ctx.now, ctx.cfg)
         ctx.log(string.format('%s -> %s (%s)', def.name, who, token))
         return 'sent'
     end
@@ -108,7 +121,26 @@ function actions.perform(ev, ctx)
     ctx.log(string.format('[ClickHeal demo] %s -> %s (%s). Nothing was sent to the game.', def.name, who, token))
 
     if ctx.demo then ctx.demo.cast(def, ctx.now) end
+    casting.start(def, ctx.now, ctx.cfg)
     return 'cast'
+end
+
+--- Sends the held click once the player can act again. `player` is this frame's player table.
+-- Returns what perform returned, or nil when nothing was due.
+function actions.run_queued(ctx, player)
+    local ev = casting.take(ctx.now)
+    if not ev then return nil end
+    local def = spells.defs[ev.spell]
+    local m = ctx.roster_by_slot[ev.slot]
+    if not def or not m then return nil end
+    local p = {}
+    for k, v in pairs(player or {}) do p[k] = v end
+    p.busy_left = casting.left(ctx.now)
+    local state, detail = spellstate.evaluate(def, m, p, ctx.cfg)
+    local ev2 = {}
+    for k, v in pairs(ev) do ev2[k] = v end
+    ev2.state, ev2.detail = state, detail
+    return actions.perform(ev2, ctx)
 end
 
 return actions

@@ -11,7 +11,7 @@ done
 
 echo "Using $LUA"
 status=0
-for t in tests/run.lua tests/smoke_ashita.lua; do
+for t in tests/run.lua tests/smoke_ashita.lua tests/config_layout.lua; do
     echo "== $t"
     "$LUA" "$t" || status=1
 done

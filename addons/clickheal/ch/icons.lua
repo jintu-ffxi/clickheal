@@ -48,4 +48,27 @@ function icons.texture(status_id)
     return nil
 end
 
+local files = {}   -- job abbreviation -> { tex, ptr } | false
+
+--- Texture handle for assets/jobs/<ABBR>.png inside the addon folder (user-supplied job icons), or nil
+--- when the file is missing or cannot be loaded. UNVERIFIED on a live client (D3DXCreateTextureFromFileA).
+function icons.job_texture(abbr)
+    if not icons.ready or not abbr then return nil end
+    local hit = files[abbr]
+    if hit ~= nil then return hit and hit.ptr or nil end
+    local ok, res = pcall(function()
+        local base = (addon and addon.path) or ''
+        local path = base .. 'assets/jobs/' .. abbr .. '.png'
+        local f = io.open(path, 'rb')
+        if not f then return nil end
+        f:close()
+        local out = ffi.new('IDirect3DTexture8*[1]')
+        if C.D3DXCreateTextureFromFileA(dev, path, out) ~= C.S_OK then return nil end
+        local tex = d3d.gc_safe_release(ffi.cast('IDirect3DTexture8*', out[0]))
+        return { tex = tex, ptr = tonumber(ffi.cast('uint32_t', tex)) }
+    end)
+    files[abbr] = (ok and res) or false
+    return (ok and res) and res.ptr or nil
+end
+
 return icons

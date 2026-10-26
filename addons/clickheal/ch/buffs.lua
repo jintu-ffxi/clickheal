@@ -28,6 +28,12 @@ buffs.info = {
     reraise   = { short = 'RR',  label = 'Reraise',   total = 3600 },
 }
 
+-- Status effect ids, for the game's own icons (see source_game.lua; unverified on this server).
+buffs.id_of = {
+    haste = 33, regen = 42, refresh = 43, flurry = 581, protect = 40, shell = 41, phalanx = 116,
+    stoneskin = 37, blink = 36, aquaveil = 39, sneak = 71, invisible = 69, reraise = 113,
+}
+
 -- Fixed display order, so pips never jump around when a timer changes.
 buffs.order = {
     'haste', 'flurry', 'regen', 'refresh', 'protect', 'shell', 'phalanx', 'stoneskin',

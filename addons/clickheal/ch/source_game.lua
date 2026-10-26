@@ -19,6 +19,7 @@
 
 local debuffs = require('ch.debuffs')
 local ids     = require('ch.spell_ids')
+local chatstatus = require('ch.chatstatus')
 
 local game = {}
 
@@ -26,7 +27,7 @@ local game = {}
 local BUFF_BY_ID = {
     [33] = 'haste', [42] = 'regen', [43] = 'refresh', [40] = 'protect', [41] = 'shell',
     [116] = 'phalanx', [37] = 'stoneskin', [36] = 'blink', [39] = 'aquaveil', [71] = 'sneak',
-    [69] = 'invisible', [113] = 'reraise',
+    [69] = 'invisible', [113] = 'reraise', [581] = 'flurry',
 }
 -- Debuffs that stop you acting at all.
 local INCAPACITATED = { [0] = true, [2] = true, [7] = true, [10] = true, [14] = true, [28] = true }
@@ -49,14 +50,31 @@ local function managers()
     return call(mem, 'GetParty'), call(mem, 'GetPlayer'), call(mem, 'GetEntity'), call(mem, 'GetRecast')
 end
 
+--- Reads a list the game hands back. Ashita returns these as userdata arrays, not Lua tables, so index
+-- 0..n (or 1..n when 0 is empty) under pcall. Returns a plain array of numbers, or nil if it is not indexable.
+local function read_list(list, n)
+    if list == nil then return nil end
+    local out, got = {}, false
+    local first = 0
+    local ok0, v0 = pcall(function() return list[0] end)
+    if not ok0 then return nil end
+    if v0 == nil then first = 1 end
+    for i = 0, n - 1 do
+        local ok, v = pcall(function() return list[first + i] end)
+        if ok and v ~= nil then
+            v = tonumber(v)
+            if v then out[#out + 1] = v; got = true end
+        end
+    end
+    return out, got
+end
+
 --- Your status effect ids (255 / -1 mean "empty slot").
 local function own_buff_ids(player)
     local ids = {}
-    local list = call(player, 'GetBuffs')
-    if type(list) == 'table' then
-        for _, id in pairs(list) do
-            if type(id) == 'number' and id > 0 and id < 255 then ids[#ids + 1] = id end
-        end
+    local list = read_list(call(player, 'GetBuffs'), 32)
+    for _, id in ipairs(list or {}) do
+        if id > 0 and id < 255 then ids[#ids + 1] = id end
     end
     return ids
 end
@@ -71,6 +89,34 @@ local function own_status(player)
         if INCAPACITATED[id] then stopped = true end
     end
     return debuff_keys, buff_list, silenced, stopped
+end
+
+--- Another party member's status effects, read from the party status packet the game keeps in memory.
+-- Returns debuff keys, buff list, or nil when the game has sent nothing for this slot. That is the normal
+-- case for trusts and for members the client has no status data for. UNVERIFIED layout (see /ch partydump):
+-- GetStatusIcons(slot) is 32 icon ids (low 8 bits), GetStatusIconsBitMask(slot) holds 2 more bits per entry.
+local function member_status(party, slot)
+    local sid = call(party, 'GetStatusIconsServerId', slot)
+    if type(sid) ~= 'number' or sid == 0 then return nil end
+    local icons = read_list(call(party, 'GetStatusIcons', slot), 32)
+    if not icons then return nil end
+    local mask = call(party, 'GetStatusIconsBitMask', slot)
+    mask = (type(mask) == 'number' or type(mask) == 'cdata') and tonumber(mask) or nil
+    local d, b, seen = {}, {}, {}
+    for i = 0, #icons - 1 do
+        local v = icons[i + 1]
+        if v > 0 and v < 255 then
+            local id = v
+            if mask and mask < 2 ^ 53 then id = v + 256 * (math.floor(mask / 2 ^ (2 * i)) % 4) end
+            if not seen[id] then
+                seen[id] = true
+                local dk = debuffs.by_id[id]
+                if dk then d[#d + 1] = dk end
+                if BUFF_BY_ID[id] then b[#b + 1] = { key = BUFF_BY_ID[id] } end
+            end
+        end
+    end
+    return d, b
 end
 
 -- Recast timers are in 1/60 s. `peak` remembers the longest value seen per key, so the button can
@@ -163,6 +209,12 @@ function game.roster(_, _)
                 end
             end
 
+            local md, mb
+            if not is_you then
+                md, mb = member_status(party, slot)
+                if not md then md, mb = chatstatus.get(name) end   -- no party status data: use what the chat log said
+            end
+
             out[#out + 1] = {
                 slot = slot, active = true, name = name,
                 job = call(party, 'GetMemberMainJob', slot) or 0,
@@ -172,8 +224,8 @@ function game.roster(_, _)
                 mp = mp, mpmax = mpmax, mpp = mpp,
                 dist = dist, zone_diff = zone_diff or nil,
                 dead = (not zone_diff) and hp == 0 and hpp == 0,
-                debuffs = is_you and d_keys or {}, debuff_rem = {},
-                buffs = is_you and b_list or {}, has_buff_data = is_you,
+                debuffs = is_you and d_keys or md or {}, debuff_rem = {},
+                buffs = is_you and b_list or mb or {}, has_buff_data = true,
                 is_you = is_you,
             }
         end
@@ -207,6 +259,18 @@ end
 
 --- /ch partydump: prints what the party memory says about status icons, so we can see how other
 -- members' debuffs are laid out on this client. Read only. `emit(line)` gets each line.
+--- Progress of the game's own cast bar, 0..1, or nil when it cannot be read.
+function game.castbar()
+    local core = _G.AshitaCore
+    local mem = core and call(core, 'GetMemoryManager')
+    local bar = mem and call(mem, 'GetCastBar')
+    if not bar then return nil end
+    local pct = call(bar, 'GetPercent')
+    if type(pct) ~= 'number' then return nil end
+    if pct > 1 then pct = pct / 100 end
+    return math.max(0, math.min(1, pct))
+end
+
 function game.dump_status(emit)
     local party = managers()
     if not party then emit('partydump: party memory not available (not logged in?)'); return end

@@ -582,4 +582,15 @@ function spells.binding_lines(def)
     return table.concat(lines, '   ')
 end
 
+-- Cast time in seconds (from the generated id table). Abilities have none; spells default to 0 when unknown.
+do
+    local ok, ids = pcall(require, 'ch.spell_ids')
+    if ok then
+        for key, v in pairs(ids) do
+            local d = spells.defs[key]
+            if d and v.cast then d.cast = v.cast end
+        end
+    end
+end
+
 return spells

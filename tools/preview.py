@@ -76,7 +76,9 @@ def render(doc, origin_bg=(34, 38, 46, 255)):
         elif op == "text":
             layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
             d = ImageDraw.Draw(layer)
-            d.text((cmd["x"], cmd["y"] - 1 * fs), cmd["s"], font=font, fill=unpack(cmd["c"]))
+            k = cmd.get("k", 1) or 1
+            f2 = font if abs(k - 1) < 0.01 else load_font(11.6 * fs * k)
+            d.text((cmd["x"], cmd["y"] - 1 * fs), cmd["s"], font=f2, fill=unpack(cmd["c"]))
             img = Image.alpha_composite(img, layer)
         elif op == "tooltip":
             tooltip = cmd["lines"]

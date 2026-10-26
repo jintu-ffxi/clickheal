@@ -136,7 +136,13 @@ presets.colorblind = {
     },
 }
 
-theme.preset_names = { 'modern', 'mono', 'colorblind' }
+-- Same neutral look as modern; the HP fill takes each member's job color while healthy (see hp_fill),
+-- then still moves to yellow, orange and red as HP drops.
+presets.job = {}
+for k, v in pairs(presets.modern) do presets.job[k] = v end
+presets.job.job_tint = true
+
+theme.preset_names = { 'modern', 'job', 'mono', 'colorblind' }
 
 --- Returns the palette table for a preset name (falls back to modern).
 function theme.get(name)
@@ -154,9 +160,17 @@ end
 
 --- Fill color for a full-row HP bar: healthy color, then yellow, orange, red as HP drops.
 -- Uses the palette's own good / warn / bad so the colorblind and mono palettes keep working.
-function theme.hp_fill(pal, frac)
+function theme.hp_fill(pal, frac, job_rgb)
     frac = math.max(0, math.min(1, frac or 0))
     local st = pal.hp_stops
+    if st and pal.job_tint and job_rgb then
+        -- The healthy end is the job's color, darkened if it is light so white text stays readable.
+        local r, g, b = job_rgb[1], job_rgb[2], job_rgb[3]
+        local lum = 0.30 * r + 0.59 * g + 0.11 * b
+        local k = 0.86 * math.min(1, 0.50 / math.max(lum, 0.01))
+        local top = P(r * k, g * k, b * k, 1.0)
+        st = { top, st[2], st[3], st[4] }
+    end
     if st then
         -- Four fixed stops: full, yellow, orange, red. Anchors at 100% / 55% / 30% / 12% HP.
         if frac >= 0.55 then return theme.mix(st[2], st[1], (frac - 0.55) / 0.45) end
